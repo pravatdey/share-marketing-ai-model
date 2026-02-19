@@ -1,0 +1,98 @@
+name: Upstox Auto Trading Bot
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Schedule: Run every weekday at 9:10 AM IST (3:40 AM UTC)
+#   IST = UTC + 5:30
+#   9:10 AM IST = 03:40 AM UTC
+#
+# The job runs for up to 6 hours (360 minutes), covering:
+#   9:10 AM IST  →  auth + setup
+#   9:15 AM IST  →  market opens, observation
+#   9:30 AM IST  →  ORB established, signals start
+#   3:10 PM IST  →  force-exit all positions  (within the 6-hour window)
+#   3:15 PM IST  →  daily summary email sent
+#
+# IMPORTANT: Make this GitHub repository PUBLIC for unlimited free minutes.
+# Private repos only get 2,000 minutes/month (≈ 5 trading days at 6h/day).
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: "40 3 * * 1-5"    # 3:40 AM UTC = 9:10 AM IST, Monday–Friday
+  workflow_dispatch:            # Allow manual trigger from GitHub UI for testing
+
+jobs:
+  trade:
+    name: Run Trading Bot
+    runs-on: ubuntu-latest
+    timeout-minutes: 360        # Max 6 hours (GitHub Actions limit)
+
+    steps:
+      # ── 1. Checkout repository ────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Install Chrome (for Selenium-based Upstox login) ───────────────
+      - name: Install Google Chrome
+        run: |
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | \
+            sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update -q
+          sudo apt-get install -y google-chrome-stable
+
+      # ── 4. Install Python dependencies ────────────────────────────────────
+      - name: Install Python packages
+        run: pip install --upgrade pip && pip install -r requirements.txt
+
+      # ── 5. Write secrets to .env file ────────────────────────────────────
+      #    GitHub Secrets are exposed as environment variables.
+      #    python-dotenv will pick them up automatically from the environment.
+      - name: Export secrets as environment variables
+        run: echo "Secrets exported via GitHub environment"
+        env:
+          UPSTOX_API_KEY:      ${{ secrets.UPSTOX_API_KEY }}
+          UPSTOX_API_SECRET:   ${{ secrets.UPSTOX_API_SECRET }}
+          UPSTOX_REDIRECT_URI: ${{ secrets.UPSTOX_REDIRECT_URI }}
+          UPSTOX_MOBILE:       ${{ secrets.UPSTOX_MOBILE }}
+          UPSTOX_PIN:          ${{ secrets.UPSTOX_PIN }}
+          UPSTOX_TOTP_SECRET:  ${{ secrets.UPSTOX_TOTP_SECRET }}
+          TRADING_CAPITAL:     ${{ secrets.TRADING_CAPITAL }}
+          DAILY_PROFIT_TARGET: ${{ secrets.DAILY_PROFIT_TARGET }}
+          DAILY_MAX_LOSS:      ${{ secrets.DAILY_MAX_LOSS }}
+          EMAIL_SENDER:        ${{ secrets.EMAIL_SENDER }}
+          EMAIL_APP_PASSWORD:  ${{ secrets.EMAIL_APP_PASSWORD }}
+          EMAIL_RECEIVER:      ${{ secrets.EMAIL_RECEIVER }}
+
+      # ── 6. Run the trading bot ────────────────────────────────────────────
+      - name: Run trading bot
+        env:
+          UPSTOX_API_KEY:      ${{ secrets.UPSTOX_API_KEY }}
+          UPSTOX_API_SECRET:   ${{ secrets.UPSTOX_API_SECRET }}
+          UPSTOX_REDIRECT_URI: ${{ secrets.UPSTOX_REDIRECT_URI }}
+          UPSTOX_MOBILE:       ${{ secrets.UPSTOX_MOBILE }}
+          UPSTOX_PIN:          ${{ secrets.UPSTOX_PIN }}
+          UPSTOX_TOTP_SECRET:  ${{ secrets.UPSTOX_TOTP_SECRET }}
+          TRADING_CAPITAL:     ${{ secrets.TRADING_CAPITAL }}
+          DAILY_PROFIT_TARGET: ${{ secrets.DAILY_PROFIT_TARGET }}
+          DAILY_MAX_LOSS:      ${{ secrets.DAILY_MAX_LOSS }}
+          EMAIL_SENDER:        ${{ secrets.EMAIL_SENDER }}
+          EMAIL_APP_PASSWORD:  ${{ secrets.EMAIL_APP_PASSWORD }}
+          EMAIL_RECEIVER:      ${{ secrets.EMAIL_RECEIVER }}
+        run: python main.py
+
+      # ── 7. Upload log file as artifact ────────────────────────────────────
+      - name: Upload trading log
+        if: always()    # upload even if bot fails or times out
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-log-${{ github.run_number }}
+          path: logs/trading.log
+          retention-days: 30

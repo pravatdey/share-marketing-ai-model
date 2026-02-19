@@ -1,0 +1,32 @@
+# Upstox API SDK
+upstox-python-api==2.9.0
+
+# Technical Analysis
+pandas==2.1.4
+numpy==1.26.2
+pandas-ta==0.3.14b0
+
+# Web Automation for OAuth login
+selenium==4.16.0
+webdriver-manager==4.0.1
+
+# TOTP / 2FA
+pyotp==2.9.0
+
+# HTTP Requests
+requests==2.31.0
+
+# Scheduling
+schedule==1.2.1
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Email
+secure-smtplib==0.1.1
+
+# Date/Time
+pytz==2023.3
+
+# Logging
+colorlog==6.7.0
