@@ -62,7 +62,12 @@ class MarketData:
             resp = session.send(prepared, timeout=15)
             resp.raise_for_status()
         except requests.RequestException as exc:
-            logger.error("Failed to fetch candles for %s: %s", instrument_key, exc)
+            body = ""
+            try:
+                body = exc.response.text if exc.response is not None else ""
+            except Exception:
+                pass
+            logger.error("Failed to fetch candles for %s: %s | body: %s", instrument_key, exc, body)
             return pd.DataFrame()
 
         data = resp.json().get("data", {}).get("candles", [])
