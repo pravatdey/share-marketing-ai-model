@@ -41,14 +41,21 @@ SCREENSHOT_DIR = "logs"
 
 
 def _save_screenshot(driver, name: str):
-    """Save a debug screenshot to the logs directory."""
+    """Save a debug screenshot and page source to the logs directory."""
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-    path = os.path.join(SCREENSHOT_DIR, f"{name}.png")
+    png_path = os.path.join(SCREENSHOT_DIR, f"{name}.png")
+    html_path = os.path.join(SCREENSHOT_DIR, f"{name}.html")
     try:
-        driver.save_screenshot(path)
-        logger.info("Screenshot saved: %s", path)
+        driver.save_screenshot(png_path)
+        logger.info("Screenshot saved: %s", png_path)
     except Exception as exc:
-        logger.warning("Could not save screenshot %s: %s", path, exc)
+        logger.warning("Could not save screenshot %s: %s", png_path, exc)
+    try:
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        logger.info("Page source saved: %s", html_path)
+    except Exception as exc:
+        logger.warning("Could not save page source %s: %s", html_path, exc)
 
 
 def _build_chrome_driver() -> webdriver.Chrome:
