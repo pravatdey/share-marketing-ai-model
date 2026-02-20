@@ -22,12 +22,10 @@ import pyotp
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
 
 import config.settings as cfg
 
@@ -47,8 +45,7 @@ def _build_chrome_driver() -> webdriver.Chrome:
     # Suppress Selenium DevTools logs
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(options=opts)
     driver.set_page_load_timeout(30)
     return driver
 

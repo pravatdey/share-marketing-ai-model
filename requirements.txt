@@ -5,7 +5,6 @@ pandas-ta==0.4.71b0
 
 # Web Automation for OAuth login
 selenium==4.16.0
-webdriver-manager==4.0.1
 
 # TOTP / 2FA
 pyotp==2.9.0
