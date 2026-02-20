@@ -5,6 +5,7 @@ and computes technical indicators (EMA, RSI, ATR, Volume MA).
 
 import logging
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 import pandas_ta as ta
