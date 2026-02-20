@@ -1,6 +1,3 @@
-# Upstox API SDK
-upstox-python-api==2.9.0
-
 # Technical Analysis
 pandas==2.1.4
 numpy==1.26.2
