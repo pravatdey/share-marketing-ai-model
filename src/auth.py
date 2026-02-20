@@ -247,13 +247,45 @@ def _exchange_code_for_token(auth_code: str) -> str:
     return token
 
 
+def _validate_token(token: str) -> bool:
+    """Return True if the token is still accepted by the Upstox API."""
+    try:
+        resp = requests.get(
+            f"{cfg.UPSTOX_BASE_URL}/user/profile",
+            headers={
+                "accept":        "application/json",
+                "Authorization": f"Bearer {token}",
+                "Api-Version":   "2.0",
+            },
+            timeout=10,
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def get_access_token() -> str:
     """
-    Full authentication flow:
-      Selenium login → auth code → access token.
-    Returns the access token string.
+    1. If UPSTOX_ACCESS_TOKEN is set in env/secrets and still valid → use it
+       directly, skipping Selenium + SMS OTP entirely.
+    2. Otherwise → fall back to full Selenium browser login.
+
+    To use option 1:
+      - Go to https://api.upstox.com/v2/login/authorization/dialog manually
+        (or use any Upstox login tool) to get today's access token.
+      - Paste it into GitHub Secrets as UPSTOX_ACCESS_TOKEN before 9:10 AM IST.
+      - The bot validates it with a quick API call and reuses it all day.
+      - Upstox tokens expire at midnight IST, so update the secret each morning.
     """
-    logger.info("Starting Upstox authentication …")
+    stored_token = cfg.UPSTOX_ACCESS_TOKEN
+    if stored_token:
+        logger.info("Found UPSTOX_ACCESS_TOKEN secret — validating …")
+        if _validate_token(stored_token):
+            logger.info("Stored token is valid. Skipping Selenium login.")
+            return stored_token
+        logger.warning("Stored token is expired or invalid. Falling back to Selenium login.")
+
+    logger.info("Starting Upstox authentication via Selenium …")
     auth_code    = _get_auth_code_via_selenium()
     access_token = _exchange_code_for_token(auth_code)
     return access_token

@@ -58,6 +58,7 @@ jobs:
       - name: Export secrets as environment variables
         run: echo "Secrets exported via GitHub environment"
         env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
           UPSTOX_API_KEY:      ${{ secrets.UPSTOX_API_KEY }}
           UPSTOX_API_SECRET:   ${{ secrets.UPSTOX_API_SECRET }}
           UPSTOX_REDIRECT_URI: ${{ secrets.UPSTOX_REDIRECT_URI }}
@@ -74,6 +75,7 @@ jobs:
       # ── 6. Run the trading bot ────────────────────────────────────────────
       - name: Run trading bot
         env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
           UPSTOX_API_KEY:      ${{ secrets.UPSTOX_API_KEY }}
           UPSTOX_API_SECRET:   ${{ secrets.UPSTOX_API_SECRET }}
           UPSTOX_REDIRECT_URI: ${{ secrets.UPSTOX_REDIRECT_URI }}

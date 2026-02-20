@@ -15,7 +15,9 @@ UPSTOX_API_SECRET   = os.getenv("UPSTOX_API_SECRET", "")
 UPSTOX_REDIRECT_URI = os.getenv("UPSTOX_REDIRECT_URI", "https://127.0.0.1/upstox-callback")
 UPSTOX_MOBILE       = os.getenv("UPSTOX_MOBILE", "")
 UPSTOX_PIN          = os.getenv("UPSTOX_PIN", "")
-UPSTOX_TOTP_SECRET  = os.getenv("UPSTOX_TOTP_SECRET", "")
+UPSTOX_TOTP_SECRET   = os.getenv("UPSTOX_TOTP_SECRET", "")
+# Pre-stored access token (set this in GitHub Secrets to skip Selenium login)
+UPSTOX_ACCESS_TOKEN  = os.getenv("UPSTOX_ACCESS_TOKEN", "")
 
 # Upstox API v2 base URL
 UPSTOX_BASE_URL = "https://api.upstox.com/v2"
