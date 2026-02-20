@@ -47,13 +47,19 @@ class MarketData:
         """
         # The intraday endpoint returns today's candles automatically.
         # It does NOT accept from_date/to_date query parameters (causes 400).
+        # requests encodes '|' → '%7C' in path segments; Upstox requires the
+        # literal '|', so we prepare the request and restore the pipe character.
         url = (
             f"{cfg.UPSTOX_BASE_URL}/historical-candle/intraday"
             f"/{instrument_key}/{interval}"
         )
 
         try:
-            resp = requests.get(url, headers=self._headers, timeout=15)
+            session = requests.Session()
+            req = requests.Request('GET', url, headers=self._headers)
+            prepared = session.prepare_request(req)
+            prepared.url = prepared.url.replace('%7C', '|')
+            resp = session.send(prepared, timeout=15)
             resp.raise_for_status()
         except requests.RequestException as exc:
             logger.error("Failed to fetch candles for %s: %s", instrument_key, exc)
@@ -77,10 +83,13 @@ class MarketData:
 
     def get_ltp(self, instrument_key: str) -> Optional[float]:
         """Return the Last Traded Price (LTP) for an instrument."""
-        url = f"{cfg.UPSTOX_BASE_URL}/market-quote/ltp"
-        params = {"instrument_key": instrument_key}
+        url = f"{cfg.UPSTOX_BASE_URL}/market-quote/ltp?instrument_key={instrument_key}"
         try:
-            resp = requests.get(url, headers=self._headers, params=params, timeout=10)
+            session = requests.Session()
+            req = requests.Request('GET', url, headers=self._headers)
+            prepared = session.prepare_request(req)
+            prepared.url = prepared.url.replace('%7C', '|')
+            resp = session.send(prepared, timeout=10)
             resp.raise_for_status()
             ltp_data = resp.json().get("data", {})
             # Key format in response: "NSE_EQ:INFY" – just take first value
@@ -92,10 +101,13 @@ class MarketData:
 
     def get_quote(self, instrument_key: str) -> dict:
         """Return full quote data including OHLC, volume, and LTP."""
-        url = f"{cfg.UPSTOX_BASE_URL}/market-quote/quotes"
-        params = {"instrument_key": instrument_key}
+        url = f"{cfg.UPSTOX_BASE_URL}/market-quote/quotes?instrument_key={instrument_key}"
         try:
-            resp = requests.get(url, headers=self._headers, params=params, timeout=10)
+            session = requests.Session()
+            req = requests.Request('GET', url, headers=self._headers)
+            prepared = session.prepare_request(req)
+            prepared.url = prepared.url.replace('%7C', '|')
+            resp = session.send(prepared, timeout=10)
             resp.raise_for_status()
             data = resp.json().get("data", {})
             for key, val in data.items():
