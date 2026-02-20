@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Set up Python ──────────────────────────────────────────────────
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -89,10 +89,10 @@ jobs:
         run: python main.py
 
       # ── 7. Upload log file as artifact ────────────────────────────────────
-      - name: Upload trading log
+      - name: Upload logs and debug screenshots
         if: always()    # upload even if bot fails or times out
         uses: actions/upload-artifact@v4
         with:
           name: trading-log-${{ github.run_number }}
-          path: logs/trading.log
+          path: logs/
           retention-days: 30

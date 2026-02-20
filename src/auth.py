@@ -8,12 +8,18 @@ Flow:
   1. Open the Upstox authorization URL in headless Chrome.
   2. Fill mobile number → click Get OTP / Continue.
   3. Fill 6-digit PIN.
-  4. Generate TOTP with pyotp and fill it.
+  4. Generate TOTP with pyotp and fill it.  ← this is the automated OTP
   5. Submit → capture the redirect URL that contains ?code=...
   6. Exchange the code for an access token via POST.
   7. Return the access token for all subsequent API calls.
+
+Note on OTP:
+  The TOTP (6-digit code) is generated automatically by pyotp using the
+  UPSTOX_TOTP_SECRET (the base32 secret from your Upstox authenticator setup).
+  No manual OTP entry is needed.
 """
 
+import os
 import re
 import time
 import logging
@@ -31,6 +37,19 @@ import config.settings as cfg
 
 logger = logging.getLogger(__name__)
 
+SCREENSHOT_DIR = "logs"
+
+
+def _save_screenshot(driver, name: str):
+    """Save a debug screenshot to the logs directory."""
+    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+    path = os.path.join(SCREENSHOT_DIR, f"{name}.png")
+    try:
+        driver.save_screenshot(path)
+        logger.info("Screenshot saved: %s", path)
+    except Exception as exc:
+        logger.warning("Could not save screenshot %s: %s", path, exc)
+
 
 def _build_chrome_driver() -> webdriver.Chrome:
     """Return a headless Chrome WebDriver (works on GitHub Actions Ubuntu runner)."""
@@ -42,7 +61,6 @@ def _build_chrome_driver() -> webdriver.Chrome:
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--ignore-certificate-errors")
     opts.add_argument("--allow-insecure-localhost")
-    # Suppress Selenium DevTools logs
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
 
     driver = webdriver.Chrome(options=opts)
@@ -57,6 +75,19 @@ def _wait_for_element(driver, by, selector, timeout=15):
     )
 
 
+def _try_selectors(driver, selectors, timeout=10):
+    """
+    Try multiple (By, selector) pairs and return the first found element.
+    Raises TimeoutException if none match.
+    """
+    for by, selector in selectors:
+        try:
+            return _wait_for_element(driver, by, selector, timeout=timeout)
+        except TimeoutException:
+            continue
+    raise TimeoutException(f"None of the selectors matched: {selectors}")
+
+
 def _safe_send_keys(driver, by, selector, text, timeout=15):
     el = _wait_for_element(driver, by, selector, timeout)
     el.clear()
@@ -67,6 +98,7 @@ def _safe_send_keys(driver, by, selector, text, timeout=15):
 def _get_auth_code_via_selenium() -> str:
     """
     Automate the Upstox login page and return the OAuth2 auth code.
+    Screenshots are saved to logs/ at every step for debugging.
     """
     driver = _build_chrome_driver()
     auth_code = None
@@ -75,48 +107,70 @@ def _get_auth_code_via_selenium() -> str:
         logger.info("Opening Upstox authorization URL …")
         driver.get(cfg.UPSTOX_AUTH_URL)
         time.sleep(2)
+        _save_screenshot(driver, "01_login_page")
 
         # ── Step 1: Enter mobile number ──────────────────────────────────────
         logger.info("Entering mobile number …")
-        try:
-            mobile_field = _wait_for_element(driver, By.ID, "mobileNum")
-        except TimeoutException:
-            # Some Upstox versions use 'email' or a different selector
-            mobile_field = _wait_for_element(driver, By.NAME, "mobile")
+        mobile_field = _try_selectors(driver, [
+            (By.ID,    "mobileNum"),
+            (By.NAME,  "mobile"),
+            (By.XPATH, "//input[@type='tel']"),
+            (By.XPATH, "//input[contains(@placeholder,'mobile') or contains(@placeholder,'Mobile')]"),
+        ])
         mobile_field.clear()
         mobile_field.send_keys(cfg.UPSTOX_MOBILE)
+        _save_screenshot(driver, "02_mobile_entered")
 
-        # Click the "Get OTP" / "Continue" button
+        # Click "Get OTP" / "Continue"
         try:
             btn = driver.find_element(By.ID, "getOtp")
         except NoSuchElementException:
-            btn = driver.find_element(By.XPATH, "//button[contains(text(),'Continue') or contains(text(),'Get OTP')]")
+            btn = driver.find_element(
+                By.XPATH,
+                "//button[contains(text(),'Continue') or contains(text(),'Get OTP') or contains(text(),'get otp')]",
+            )
         btn.click()
-        time.sleep(2)
+        time.sleep(3)
+        _save_screenshot(driver, "03_after_get_otp_click")
 
         # ── Step 2: Enter 6-digit PIN ────────────────────────────────────────
         logger.info("Entering PIN …")
-        try:
-            pin_field = _wait_for_element(driver, By.ID, "pinCode")
-        except TimeoutException:
-            pin_field = _wait_for_element(driver, By.NAME, "pin")
+        pin_field = _try_selectors(driver, [
+            (By.ID,    "pinCode"),
+            (By.NAME,  "pin"),
+            (By.XPATH, "//input[@type='password' and @maxlength='6']"),
+            (By.XPATH, "//input[contains(@placeholder,'PIN') or contains(@placeholder,'pin')]"),
+        ])
         pin_field.clear()
         pin_field.send_keys(cfg.UPSTOX_PIN)
         time.sleep(1)
+        _save_screenshot(driver, "04_pin_entered")
 
-        # ── Step 3: Enter TOTP ────────────────────────────────────────────────
+        # ── Step 3: Enter TOTP (auto-generated — no manual OTP needed) ────────
+        # pyotp generates the same 6-digit code your authenticator app shows.
+        # Make sure UPSTOX_TOTP_SECRET in GitHub Secrets is the base32 secret
+        # from when you set up 2FA on Upstox (not the 6-digit code itself).
         logger.info("Generating and entering TOTP …")
         totp = pyotp.TOTP(cfg.UPSTOX_TOTP_SECRET)
         otp_code = totp.now()
-        logger.info(f"Generated TOTP: {otp_code}")
+        logger.info("Generated TOTP: %s", otp_code)
+        _save_screenshot(driver, "05_before_totp_entry")
 
-        try:
-            totp_field = _wait_for_element(driver, By.ID, "otpNum")
-        except TimeoutException:
-            totp_field = _wait_for_element(driver, By.NAME, "totp")
+        totp_field = _try_selectors(driver, [
+            (By.ID,          "otpNum"),
+            (By.NAME,        "totp"),
+            (By.CSS_SELECTOR, "input[autocomplete='one-time-code']"),
+            (By.XPATH,       "//input[@type='number' and @maxlength='6']"),
+            (By.XPATH,       "//input[@type='tel'    and @maxlength='6']"),
+            (By.XPATH,       "//input[@type='text'   and @maxlength='6']"),
+            (By.XPATH,       "//input[contains(@placeholder,'TOTP') or contains(@placeholder,'totp')]"),
+            (By.XPATH,       "//input[contains(@placeholder,'OTP')  or contains(@placeholder,'otp')]"),
+            (By.XPATH,       "//input[contains(@id,'otp') or contains(@id,'totp') or contains(@name,'otp')]"),
+        ])
         totp_field.clear()
         totp_field.send_keys(otp_code)
         time.sleep(1)
+        _save_screenshot(driver, "06_totp_entered")
 
         # Submit login
         try:
@@ -124,11 +178,10 @@ def _get_auth_code_via_selenium() -> str:
         except NoSuchElementException:
             submit_btn = driver.find_element(By.XPATH, "//button[@type='submit']")
         submit_btn.click()
+        _save_screenshot(driver, "07_after_submit")
 
         # ── Step 4: Wait for redirect and extract code ────────────────────────
         logger.info("Waiting for OAuth2 redirect …")
-        # Upstox will redirect to our callback URL which Chrome cannot actually load
-        # (it's 127.0.0.1), so we poll the current URL until it changes.
         for _ in range(20):
             time.sleep(1)
             current_url = driver.current_url
@@ -139,16 +192,19 @@ def _get_auth_code_via_selenium() -> str:
                 break
 
         if not auth_code:
-            # Try reading from page source (some flows show the code on screen)
             source = driver.page_source
             match = re.search(r"code=([A-Za-z0-9_\-]+)", source)
             if match:
                 auth_code = match.group(1)
 
         if not auth_code:
+            _save_screenshot(driver, "08_redirect_failed")
             logger.error("Could not extract auth code. Current URL: %s", driver.current_url)
             raise RuntimeError("Failed to capture Upstox auth code after login.")
 
+    except Exception:
+        _save_screenshot(driver, "error_state")
+        raise
     finally:
         driver.quit()
 
