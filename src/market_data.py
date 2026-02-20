@@ -4,8 +4,7 @@ and computes technical indicators (EMA, RSI, ATR, Volume MA).
 """
 
 import logging
-from datetime import date, datetime, timedelta
-from typing import Optional
+from datetime import datetime
 
 import pandas as pd
 import pandas_ta as ta
@@ -33,34 +32,27 @@ class MarketData:
         self,
         instrument_key: str,
         interval: str = cfg.CANDLE_INTERVAL,
-        from_date: Optional[str] = None,
-        to_date: Optional[str] = None,
     ) -> pd.DataFrame:
         """
-        Fetch historical/intraday OHLCV candles.
+        Fetch today's intraday OHLCV candles from Upstox.
 
         Args:
             instrument_key: e.g. "NSE_EQ|INE040A01034"
-            interval: "1minute" | "5minute" | "30minute" | "1day" etc.
-            from_date: "YYYY-MM-DD" (defaults to today)
-            to_date:   "YYYY-MM-DD" (defaults to today)
+            interval: "1minute" | "5minute" | "30minute" etc.
 
         Returns:
             DataFrame with columns: [datetime, open, high, low, close, volume]
             Sorted oldest → newest.
         """
-        today     = date.today().isoformat()
-        from_date = from_date or today
-        to_date   = to_date   or today
-
+        # The intraday endpoint returns today's candles automatically.
+        # It does NOT accept from_date/to_date query parameters (causes 400).
         url = (
             f"{cfg.UPSTOX_BASE_URL}/historical-candle/intraday"
             f"/{instrument_key}/{interval}"
         )
-        params = {"from_date": from_date, "to_date": to_date}
 
         try:
-            resp = requests.get(url, headers=self._headers, params=params, timeout=15)
+            resp = requests.get(url, headers=self._headers, timeout=15)
             resp.raise_for_status()
         except requests.RequestException as exc:
             logger.error("Failed to fetch candles for %s: %s", instrument_key, exc)
