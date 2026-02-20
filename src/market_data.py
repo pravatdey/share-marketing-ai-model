@@ -82,6 +82,15 @@ class MarketData:
         df[["open", "high", "low", "close", "volume"]] = df[
             ["open", "high", "low", "close", "volume"]
         ].apply(pd.to_numeric)
+
+        # Upstox intraday API only supports 1min or 30min; resample to 5-min candles.
+        df = (
+            df.set_index("datetime")
+            .resample("5min")
+            .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+            .dropna(subset=["open"])
+            .reset_index()
+        )
         return df
 
     # ── Live Quote ────────────────────────────────────────────────────────────

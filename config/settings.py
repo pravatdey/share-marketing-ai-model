@@ -40,8 +40,10 @@ EFFECTIVE_CAPITAL = TRADING_CAPITAL * MIS_LEVERAGE   # usable buying power
 RISK_PER_TRADE = DAILY_MAX_LOSS / 2   # ₹25
 
 # Strategy parameters (Opening Range Breakout on 5-min candles)
+# Upstox intraday API only supports 1minute or 30minute intervals.
+# We fetch 1-min candles and resample to 5-min in market_data.get_candles().
 ORB_CANDLES         = 3   # number of 5-min candles for opening range (9:15–9:30 AM)
-CANDLE_INTERVAL     = "5minute"
+CANDLE_INTERVAL     = "1minute"   # fetched from API; resampled to 5-min in code
 EMA_FAST            = 9
 EMA_SLOW            = 21
 RSI_PERIOD          = 14
