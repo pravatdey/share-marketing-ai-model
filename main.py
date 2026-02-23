@@ -219,7 +219,12 @@ def main() -> None:
                 risk_manager.update_open_pnl(open_pnl)
 
         # ── No new entries after TRADING_STOP_TIME ────────────────────────────
+        # Evaluated ONCE per cycle so a clock crossing 15:00 mid-loop doesn't
+        # silently zero out capital for later stocks in the same scan.
         can_enter = not _past_time(cfg.TRADING_STOP_TIME) and risk_manager.can_trade()
+
+        # Evaluated ONCE per cycle – only changes when an order is actually placed.
+        has_open_position = active_key is not None and strategies[active_key].position is not None
 
         # ── Scan each stock for signals ───────────────────────────────────────
         for key in instrument_keys:
@@ -234,8 +239,6 @@ def main() -> None:
 
             df = market_data.add_indicators(df)
 
-            # Only provide capital if no position is open anywhere
-            has_open_position = active_key is not None and strategies[active_key].position is not None
             available_capital = cfg.EFFECTIVE_CAPITAL if (can_enter and not has_open_position) else 0.0
 
             signal: Signal = strat.generate_signal(df, available_capital)
@@ -246,7 +249,7 @@ def main() -> None:
             )
 
             # ── Execute BUY ───────────────────────────────────────────────────
-            if signal.action == "BUY" and can_enter and not has_open_position:
+            if signal.action == "BUY" and can_enter and not has_open_position and signal.quantity > 0:
                 order_id = order_manager.place_order(signal, "BUY")
                 if order_id:
                     fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
@@ -264,7 +267,7 @@ def main() -> None:
                 break  # one position at a time – stop scanning other stocks
 
             # ── Execute SHORT ─────────────────────────────────────────────────
-            elif signal.action == "SHORT" and can_enter and not has_open_position:
+            elif signal.action == "SHORT" and can_enter and not has_open_position and signal.quantity > 0:
                 order_id = order_manager.place_order(signal, "SELL")
                 if order_id:
                     fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
