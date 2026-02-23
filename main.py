@@ -2,22 +2,27 @@
 Upstox Auto Trading Bot – Main Entry Point
 ==========================================
 
+Goal: Earn ₹50 profit per day. Exit the market as soon as that is achieved.
+      Never hold overnight. Stop immediately if loss reaches ₹50.
+
 Execution flow (runs inside GitHub Actions every weekday):
 
   9:10 AM IST  – Bot starts, authenticates with Upstox
-  9:15 AM IST  – Market opens; bot waits in observation mode
-  9:15–9:30 AM – Collects first 3 five-minute candles → builds Opening Range
-  9:30 AM+     – Scans for ORB breakout signals every 5 minutes
-                 ∙ Buys on valid signal (max 1 open position)
-                 ∙ Exits on stop-loss / target / EMA-reversal
+  9:15 AM IST  – Market opens
+  9:15–9:30 AM – Collects first 3 five-minute candles for each stock → builds Opening Range
+  9:30 AM+     – Scans ALL top-N stocks every 5 minutes for BUY or SHORT signals
+                 ∙ Takes the FIRST valid signal found (BUY or SHORT)
+                 ∙ Exits on stop-loss / target / EMA-reversal / ₹50 daily profit
+                 ∙ Once a position is closed, immediately re-scans all stocks for next opportunity
   3:00 PM IST  – No new entries after this time
   3:10 PM IST  – Force-exit ALL open positions
   3:15 PM IST  – Sends daily email summary and exits
 
-Safety rules enforced throughout:
-  ∙ Stop trading once ₹50 profit is realised
-  ∙ Stop trading (and exit positions) if total loss >= ₹50
+Safety rules:
+  ∙ Stop and exit once ₹50 cumulative profit is realised
+  ∙ Stop and exit if cumulative loss >= ₹50
   ∙ Never hold positions overnight (MIS order type)
+  ∙ Max 1 open position at a time
 """
 
 import logging
@@ -98,15 +103,15 @@ def main() -> None:
     _setup_logging()
     logger.info("=" * 60)
     logger.info("Upstox Auto Trading Bot – %s", date.today().isoformat())
+    logger.info("Target: ₹%.0f profit | Max loss: ₹%.0f", cfg.DAILY_PROFIT_TARGET, cfg.DAILY_MAX_LOSS)
     logger.info("=" * 60)
 
-    # ── Holiday check ─────────────────────────────────────────────────────────
+    # ── Holiday / weekend check ────────────────────────────────────────────────
     if _is_market_holiday():
         logger.info("Today is an NSE market holiday. Bot will not trade.")
         sys.exit(0)
 
-    today_weekday = datetime.now().weekday()  # 0=Mon … 4=Fri
-    if today_weekday >= 5:
+    if datetime.now().weekday() >= 5:
         logger.info("Today is a weekend. Markets are closed.")
         sys.exit(0)
 
@@ -120,9 +125,9 @@ def main() -> None:
         sys.exit(1)
 
     # ── Component initialisation ──────────────────────────────────────────────
-    market_data   = MarketData(access_token)
-    order_manager = OrderManager(access_token)
-    risk_manager  = RiskManager()
+    market_data    = MarketData(access_token)
+    order_manager  = OrderManager(access_token)
+    risk_manager   = RiskManager()
     stock_selector = StockSelector(market_data)
 
     notifier.notify_bot_started()
@@ -131,26 +136,30 @@ def main() -> None:
     logger.info("Waiting for market open at %s IST …", cfg.MARKET_OPEN_TIME)
     _wait_until(cfg.MARKET_OPEN_TIME)
 
-    # ── Select the best stock to trade today ──────────────────────────────────
-    logger.info("Selecting best stock to trade …")
-    selected = stock_selector.select_stock(top_n=5)
-    if not selected:
-        logger.error("No suitable stock found. Exiting.")
-        notifier.notify_error("No suitable Nifty 50 stock found for today. No trades placed.")
+    # ── Select top-N stocks to monitor ────────────────────────────────────────
+    logger.info("Selecting top %d stocks to monitor …", cfg.TOP_N_STOCKS)
+    ranked_stocks = stock_selector.get_ranked_stocks(top_n=cfg.TOP_N_STOCKS)
+    if not ranked_stocks:
+        logger.error("No suitable stocks found. Exiting.")
+        notifier.notify_error("No suitable Nifty 50 stocks found for today. No trades placed.")
         sys.exit(0)
 
-    instrument_key = selected["instrument_key"]
-    notifier.notify_stock_selected(selected)
+    # Create one ORBStrategy instance per stock
+    instrument_keys = [s["instrument_key"] for s in ranked_stocks]
+    strategies: dict[str, ORBStrategy] = {
+        key: ORBStrategy(key) for key in instrument_keys
+    }
+    or_established: dict[str, bool] = {key: False for key in instrument_keys}
 
-    strategy      = ORBStrategy(instrument_key)
-    or_established = False
+    # Track entry details per stock (for P&L recording on exit)
+    entry_price: dict[str, float] = {key: 0.0 for key in instrument_keys}
+    entry_qty:   dict[str, int]   = {key: 0   for key in instrument_keys}
 
-    # State tracking for entry/exit book-keeping
-    entry_price: float = 0.0
-    entry_qty:   int   = 0
+    # Track which stock currently holds an open position
+    active_key: str | None = None
 
     # ── Main trading loop ─────────────────────────────────────────────────────
-    logger.info("Entering main trading loop …")
+    logger.info("Entering main trading loop – monitoring %d stocks …", len(instrument_keys))
 
     while True:
         now_str = _time_str(_now_ist())
@@ -159,107 +168,155 @@ def main() -> None:
         if _past_time(cfg.FORCE_EXIT_TIME):
             logger.info("Force exit time reached (%s IST). Closing all positions.", cfg.FORCE_EXIT_TIME)
             order_manager.exit_all_positions()
-            # Book any remaining open position as realised P&L
-            if strategy.position:
-                ltp = market_data.get_ltp(instrument_key) or entry_price
+            # Book any remaining open position
+            if active_key and strategies[active_key].position:
+                ltp = market_data.get_ltp(active_key) or entry_price[active_key]
                 pnl = risk_manager.record_trade(
-                    instrument_key, "BUY",
-                    entry_price, ltp, entry_qty, "force-exit at close",
+                    active_key, strategies[active_key].position.side,
+                    entry_price[active_key], ltp, entry_qty[active_key],
+                    "force-exit at close",
                 )
                 notifier.notify_trade_exit(
-                    instrument_key, entry_price, ltp, entry_qty, pnl,
+                    active_key, entry_price[active_key], ltp,
+                    entry_qty[active_key], pnl,
                     "Force-exit at close", risk_manager.realised_pnl,
                 )
             break
 
-        # ── Establish Opening Range (9:15–9:30 AM) ────────────────────────────
-        if not or_established and _past_time(cfg.ORB_END_TIME):
-            df = market_data.get_candles(instrument_key)
-            if not df.empty:
-                or_data = market_data.get_opening_range(df, n_candles=cfg.ORB_CANDLES)
-                if or_data:
-                    strategy.set_opening_range(or_data["or_high"], or_data["or_low"])
-                    or_established = True
-                    logger.info(
-                        "Opening Range: High=%.2f Low=%.2f Range=%.2f",
-                        or_data["or_high"], or_data["or_low"], or_data["or_range"],
-                    )
-
-        # ── Update open P&L ───────────────────────────────────────────────────
-        if strategy.position:
-            ltp = market_data.get_ltp(instrument_key)
-            if ltp:
-                open_pnl = strategy.position.unrealised_pnl(ltp)
-                risk_manager.update_open_pnl(open_pnl)
-
-        # ── Check risk limits ─────────────────────────────────────────────────
+        # ── Check daily risk limits ───────────────────────────────────────────
         if not risk_manager.can_trade():
             if risk_manager.is_max_loss_hit():
-                logger.warning("Max loss hit. Exiting all positions and stopping.")
+                logger.warning("Max daily loss hit. Exiting all positions and stopping.")
                 order_manager.exit_all_positions()
                 notifier.notify_max_loss_hit(risk_manager.total_pnl)
                 break
             if risk_manager.is_profit_target_hit():
-                logger.info("Profit target hit (₹%.2f). No more new trades.", risk_manager.realised_pnl)
+                logger.info(
+                    "Daily profit target ₹%.2f reached! Done for today.",
+                    risk_manager.realised_pnl,
+                )
                 notifier.notify_profit_target_hit(risk_manager.realised_pnl)
-                # Wait for force-exit time to close any open position
-                # Continue loop but won't generate new BUY signals
+                break
+
+        # ── Establish Opening Range for each stock (after 9:30 AM) ────────────
+        if _past_time(cfg.ORB_END_TIME):
+            for key in instrument_keys:
+                if not or_established[key]:
+                    df = market_data.get_candles(key)
+                    if not df.empty:
+                        or_data = market_data.get_opening_range(df, n_candles=cfg.ORB_CANDLES)
+                        if or_data:
+                            strategies[key].set_opening_range(
+                                or_data["or_high"], or_data["or_low"]
+                            )
+                            or_established[key] = True
+
+        # ── Update unrealised P&L for active position ─────────────────────────
+        if active_key and strategies[active_key].position:
+            ltp = market_data.get_ltp(active_key)
+            if ltp:
+                open_pnl = strategies[active_key].position.unrealised_pnl(ltp)
+                risk_manager.update_open_pnl(open_pnl)
 
         # ── No new entries after TRADING_STOP_TIME ────────────────────────────
         can_enter = not _past_time(cfg.TRADING_STOP_TIME) and risk_manager.can_trade()
 
-        # ── Generate signal ───────────────────────────────────────────────────
-        if or_established:
-            df = market_data.get_candles(instrument_key)
-            if not df.empty:
-                df = market_data.add_indicators(df)
-                available_capital = (
-                    cfg.EFFECTIVE_CAPITAL if not strategy.position else 0.0
-                )
-                if not can_enter and strategy.position:
-                    available_capital = 0.0   # prevent new buys but allow exits
+        # ── Scan each stock for signals ───────────────────────────────────────
+        for key in instrument_keys:
+            strat = strategies[key]
 
-                signal: Signal = strategy.generate_signal(df, available_capital if can_enter else 0.0)
+            if not or_established[key]:
+                continue  # OR not ready yet for this stock
 
-                logger.info(
-                    "[%s] Signal=%s | Reason: %s",
-                    now_str, signal.action, signal.reason,
-                )
+            df = market_data.get_candles(key)
+            if df.empty:
+                continue
 
-                # ── Execute BUY ───────────────────────────────────────────────
-                if signal.action == "BUY" and can_enter:
-                    order_id = order_manager.place_order(signal, "BUY")
-                    if order_id:
-                        fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
-                        entry_price = fill_price
-                        entry_qty   = signal.quantity
-                        # Update strategy position with actual fill price
-                        if strategy.position:
-                            strategy.position.entry_price = fill_price
-                            strategy.position.stop_loss   = round(fill_price * (1 - cfg.STOP_LOSS_PCT), 2)
-                            strategy.position.target      = round(fill_price * (1 + cfg.TARGET_PCT), 2)
-                        notifier.notify_trade_entry(
-                            signal.instrument_key, fill_price, signal.quantity,
-                            signal.stop_loss, signal.target, signal.reason,
-                        )
+            df = market_data.add_indicators(df)
 
-                # ── Execute EXIT (stop-loss / target / EMA reversal) ──────────
-                elif signal.action == "EXIT":
-                    order_id = order_manager.place_order(signal, "SELL")
-                    if order_id:
-                        fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
-                        pnl = risk_manager.record_trade(
-                            signal.instrument_key, "BUY",
-                            entry_price, fill_price, signal.quantity, signal.reason,
-                        )
-                        risk_manager.update_open_pnl(0)  # position closed
-                        notifier.notify_trade_exit(
-                            signal.instrument_key, entry_price, fill_price,
-                            signal.quantity, pnl, signal.reason,
+            # Only provide capital if no position is open anywhere
+            has_open_position = active_key is not None and strategies[active_key].position is not None
+            available_capital = cfg.EFFECTIVE_CAPITAL if (can_enter and not has_open_position) else 0.0
+
+            signal: Signal = strat.generate_signal(df, available_capital)
+
+            logger.info(
+                "[%s] [%s] Signal=%s | %s",
+                now_str, key.split("|")[-1][:12], signal.action, signal.reason,
+            )
+
+            # ── Execute BUY ───────────────────────────────────────────────────
+            if signal.action == "BUY" and can_enter and not has_open_position:
+                order_id = order_manager.place_order(signal, "BUY")
+                if order_id:
+                    fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
+                    entry_price[key] = fill_price
+                    entry_qty[key]   = signal.quantity
+                    active_key       = key
+                    if strat.position:
+                        strat.position.entry_price = fill_price
+                        strat.position.stop_loss   = round(fill_price * (1 - cfg.STOP_LOSS_PCT), 2)
+                        strat.position.target      = round(fill_price * (1 + cfg.TARGET_PCT), 2)
+                    notifier.notify_trade_entry(
+                        key, fill_price, signal.quantity,
+                        signal.stop_loss, signal.target, signal.reason,
+                    )
+                break  # one position at a time – stop scanning other stocks
+
+            # ── Execute SHORT ─────────────────────────────────────────────────
+            elif signal.action == "SHORT" and can_enter and not has_open_position:
+                order_id = order_manager.place_order(signal, "SELL")
+                if order_id:
+                    fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
+                    entry_price[key] = fill_price
+                    entry_qty[key]   = signal.quantity
+                    active_key       = key
+                    if strat.position:
+                        strat.position.entry_price = fill_price
+                        strat.position.stop_loss   = round(fill_price * (1 + cfg.STOP_LOSS_PCT), 2)
+                        strat.position.target      = round(fill_price * (1 - cfg.TARGET_PCT), 2)
+                    notifier.notify_trade_entry(
+                        key, fill_price, signal.quantity,
+                        signal.stop_loss, signal.target, signal.reason,
+                    )
+                break  # one position at a time – stop scanning other stocks
+
+            # ── Execute EXIT (stop-loss / target / EMA reversal) ──────────────
+            elif signal.action == "EXIT" and key == active_key:
+                # Determine close side: BUY position → SELL to close; SHORT → BUY to close
+                close_side = "SELL" if signal.side == "BUY" else "BUY"
+                order_id = order_manager.place_order(signal, close_side)
+                if order_id:
+                    fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
+                    pnl = risk_manager.record_trade(
+                        key, signal.side,
+                        entry_price[key], fill_price, signal.quantity, signal.reason,
+                    )
+                    risk_manager.update_open_pnl(0)
+                    notifier.notify_trade_exit(
+                        key, entry_price[key], fill_price,
+                        signal.quantity, pnl, signal.reason,
+                        risk_manager.realised_pnl,
+                    )
+                    entry_price[key] = 0.0
+                    entry_qty[key]   = 0
+                    active_key       = None
+
+                    # ── Check if ₹50 target reached after this trade ──────────
+                    if risk_manager.is_profit_target_hit():
+                        logger.info(
+                            "Daily profit target ₹%.2f reached after trade! Stopping.",
                             risk_manager.realised_pnl,
                         )
-                        entry_price = 0.0
-                        entry_qty   = 0
+                        notifier.notify_profit_target_hit(risk_manager.realised_pnl)
+                        break  # exit for-loop; outer while will also break
+
+                    # ── Check if max loss hit ─────────────────────────────────
+                    if risk_manager.is_max_loss_hit():
+                        logger.warning("Max loss ₹%.2f hit. Stopping.", abs(risk_manager.total_pnl))
+                        order_manager.exit_all_positions()
+                        notifier.notify_max_loss_hit(risk_manager.total_pnl)
+                        break  # exit for-loop; outer while will also break
 
         # ── Sleep until next poll ─────────────────────────────────────────────
         logger.info("Next check in %d seconds …", cfg.POLL_INTERVAL_SECS)

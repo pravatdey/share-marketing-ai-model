@@ -39,24 +39,37 @@ EFFECTIVE_CAPITAL = TRADING_CAPITAL * MIS_LEVERAGE   # usable buying power
 # Position sizing: risk ₹25 per trade (half of daily max loss)
 RISK_PER_TRADE = DAILY_MAX_LOSS / 2   # ₹25
 
-# Strategy parameters (Opening Range Breakout on 5-min candles)
-# Upstox intraday API only supports 1minute or 30minute intervals.
-# We fetch 1-min candles and resample to 5-min in market_data.get_candles().
-ORB_CANDLES         = 3   # number of 5-min candles for opening range (9:15–9:30 AM)
+# ── Strategy Parameters ─────────────────────────────────────────────────────
+# Opening Range Breakout on 5-min candles (resampled from 1-min API data)
+ORB_CANDLES         = 3       # number of 5-min candles for opening range (9:15–9:30 AM)
 CANDLE_INTERVAL     = "1minute"   # fetched from API; resampled to 5-min in code
 EMA_FAST            = 9
 EMA_SLOW            = 21
 RSI_PERIOD          = 14
-RSI_BUY_MIN         = 45   # RSI must be above this to buy
-RSI_BUY_MAX         = 70   # RSI must be below this to avoid overbought entry
-VOLUME_MULTIPLIER   = 1.5  # breakout volume must be 1.5× the 10-period avg volume
+
+# BUY signal: RSI must be between these values (momentum, not overbought)
+RSI_BUY_MIN         = 45
+RSI_BUY_MAX         = 70
+
+# SELL/Short signal: RSI must be between these values (weakness, not oversold)
+RSI_SELL_MIN        = 30
+RSI_SELL_MAX        = 55
+
+# Volume confirmation: current candle volume >= VOLUME_MULTIPLIER × 10-period avg
+VOLUME_MULTIPLIER   = 1.5
 
 # Per-trade stop loss and target (as % of entry price)
-STOP_LOSS_PCT   = 0.005   # 0.5 %
-TARGET_PCT      = 0.010   # 1.0 %  → 2:1 reward:risk ratio
+STOP_LOSS_PCT   = 0.005   # 0.5%
+TARGET_PCT      = 0.010   # 1.0% → 2:1 reward:risk ratio
+
+# Maximum open positions at a time (one per stock, multiple stocks allowed)
+MAX_POSITIONS = 3
+
+# How many top stocks to monitor simultaneously
+TOP_N_STOCKS = 5
 
 # Maximum open positions at a time
-MAX_POSITIONS = 1
+MAX_OPEN_POSITIONS = 1   # keep to 1 to stay within capital limits
 
 # ── Market Timing (IST) ─────────────────────────────────────────────────────
 IST = pytz.timezone("Asia/Kolkata")
@@ -64,14 +77,13 @@ IST = pytz.timezone("Asia/Kolkata")
 MARKET_OPEN_TIME   = "09:15"   # Trading begins
 ORB_END_TIME       = "09:30"   # ORB observation window ends; signals start
 TRADING_STOP_TIME  = "15:00"   # No new positions after this time
-FORCE_EXIT_TIME    = "15:10"   # Close ALL positions at this time (10 min before market close)
+FORCE_EXIT_TIME    = "15:10"   # Close ALL positions at this time
 MARKET_CLOSE_TIME  = "15:30"
 
 # Polling interval in seconds (check every 5 minutes)
 POLL_INTERVAL_SECS = 300
 
 # ── NSE Holidays 2025-2026 ──────────────────────────────────────────────────
-# Bot will skip trading on these dates
 NSE_HOLIDAYS = {
     # 2025
     "2025-01-26",  # Republic Day
@@ -133,5 +145,5 @@ NIFTY50_INSTRUMENT_KEYS = [
 ]
 
 # ── Logging ──────────────────────────────────────────────────────────────────
-LOG_FILE = "logs/trading.log"
+LOG_FILE  = "logs/trading.log"
 LOG_LEVEL = "INFO"

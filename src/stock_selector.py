@@ -1,11 +1,14 @@
 """
-Stock Selector – picks the best Nifty 50 stock to trade today.
+Stock Selector – picks and ranks the best Nifty 50 stocks to trade today.
 
-Selection criteria (evaluated once after the Opening Range is established):
+Selection criteria (evaluated once after market open):
   1. Price affordable with our leveraged capital
   2. Highest intraday ATR% (most volatile → easiest to hit ₹50 target)
-  3. Strong upward pre-market momentum (open > previous close)
-  4. High relative volume (active traders)
+  3. High relative volume (active, liquid market)
+
+The selector returns a ranked list of all candidates so that the main loop
+can monitor all of them simultaneously and switch instantly when one stock
+gives a signal while others are quiet.
 """
 
 from __future__ import annotations
@@ -23,13 +26,13 @@ class StockSelector:
     def __init__(self, market_data: MarketData):
         self._md = market_data
 
-    def select_stock(self, top_n: int = 5) -> Optional[dict]:
+    def get_ranked_stocks(self, top_n: int = cfg.TOP_N_STOCKS) -> list[dict]:
         """
-        Analyse all candidates in NIFTY50_INSTRUMENT_KEYS and return
-        the single best candidate as a dict:
+        Analyse all candidates in NIFTY50_INSTRUMENT_KEYS and return the top_n
+        ranked by ATR% (volatility), each as:
           { instrument_key, ltp, atr, atr_pct, vol_ma }
 
-        Returns None if no suitable candidate is found.
+        Returns an empty list if none are suitable.
         """
         logger.info("Screening Nifty 50 stocks for today's trade …")
         candidates = self._md.get_top_volatile_stocks(
@@ -38,15 +41,21 @@ class StockSelector:
 
         if not candidates:
             logger.warning("No suitable stocks found after screening.")
-            return None
+            return []
 
-        best = candidates[0]
-        logger.info(
-            "Selected stock → %s | LTP=%.2f | ATR=%.2f (%.3f%%) | VolMA=%.0f",
-            best["instrument_key"], best["ltp"],
-            best["atr"], best["atr_pct"], best["vol_ma"],
-        )
-        return best
+        logger.info("Top %d stocks selected for monitoring:", len(candidates))
+        for rank, stock in enumerate(candidates, start=1):
+            logger.info(
+                "  #%d %s | LTP=%.2f | ATR=%.2f (%.3f%%) | VolMA=%.0f",
+                rank,
+                stock["instrument_key"],
+                stock["ltp"],
+                stock["atr"],
+                stock["atr_pct"],
+                stock["vol_ma"],
+            )
+
+        return candidates
 
     def affordable_check(self, ltp: float) -> bool:
         """Return True if we can buy at least 1 share with our capital."""

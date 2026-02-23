@@ -1,20 +1,28 @@
 """
-Trading Strategy Module – Opening Range Breakout (ORB) with EMA + RSI confirmation.
+Trading Strategy Module – Opening Range Breakout (ORB) with EMA + RSI + Volume confirmation.
 
 Logic:
   1. Observe the first 3 candles (9:15–9:30 AM) to establish OR High and OR Low.
-  2. After 9:30 AM, look for a BUY signal:
-       - Current close > OR High  (bullish breakout)
+  2. After 9:30 AM, scan for signals every 5 minutes:
+
+     BUY signal (bullish breakout):
+       - close > OR High          (price breaks above opening range)
        - EMA(9) > EMA(21)         (uptrend confirmed)
-       - RSI between 45 and 70    (not overbought; has momentum)
-       - Volume > 1.5× 10-period average volume  (genuine breakout volume)
-  3. Once in a position, manage with:
-       - Stop loss  : entry_price × (1 – STOP_LOSS_PCT)
-       - Take profit: entry_price × (1 + TARGET_PCT)
-  4. Exit signal (to call from order manager):
-       - Current price <= stop_loss  → stop-loss exit
-       - Current price >= target     → profit target exit
-       - Time >= FORCE_EXIT_TIME     → forced time-based exit
+       - RSI between 45 and 70    (momentum, not overbought)
+       - volume >= 1.5× vol_ma    (genuine breakout volume)
+
+     SELL/Short signal (bearish breakdown):
+       - close < OR Low           (price breaks below opening range)
+       - EMA(9) < EMA(21)         (downtrend confirmed)
+       - RSI between 30 and 55    (weakness, not oversold)
+       - volume >= 1.5× vol_ma    (genuine breakdown volume)
+
+  3. Position management:
+       - Stop loss  : 0.5% against entry
+       - Take profit: 1.0% in favour  (2:1 reward:risk)
+       - Force exit : 3:10 PM
+
+Goal: ₹50 profit per day. Exit the moment target is hit.
 """
 
 from __future__ import annotations
@@ -33,13 +41,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Signal:
-    action: str          # "BUY" | "SELL" | "HOLD" | "EXIT"
+    action: str          # "BUY" | "SHORT" | "HOLD" | "EXIT"
     instrument_key: str
     reason: str
     ltp: float           # Last traded price at signal time
     quantity: int        # Suggested order quantity (0 if HOLD)
     stop_loss: float = 0.0
     target: float    = 0.0
+    side: str        = "BUY"   # "BUY" or "SHORT"
 
 
 @dataclass
@@ -49,8 +58,8 @@ class Position:
     quantity: int
     stop_loss: float
     target: float
+    side: str = "BUY"          # "BUY" (long) or "SHORT" (short)
     entry_time: datetime = field(default_factory=datetime.now)
-    side: str = "BUY"    # Only BUY (long) trades – no shorting
 
     @property
     def position_value(self) -> float:
@@ -59,20 +68,22 @@ class Position:
     def unrealised_pnl(self, ltp: float) -> float:
         if self.side == "BUY":
             return (ltp - self.entry_price) * self.quantity
-        return (self.entry_price - ltp) * self.quantity
+        else:  # SHORT
+            return (self.entry_price - ltp) * self.quantity
 
 
 class ORBStrategy:
     """
-    Opening Range Breakout strategy with EMA + RSI confirmation.
+    Opening Range Breakout strategy with EMA + RSI + Volume confirmation.
+    Supports both BUY (long) and SHORT (sell) trades.
     One instance per stock being monitored.
     """
 
     def __init__(self, instrument_key: str):
-        self.instrument_key  = instrument_key
+        self.instrument_key   = instrument_key
         self.or_high: Optional[float] = None
         self.or_low:  Optional[float] = None
-        self.or_established = False
+        self.or_established   = False
         self.position: Optional[Position] = None
 
     # ── Opening Range Setup ───────────────────────────────────────────────────
@@ -90,11 +101,8 @@ class ORBStrategy:
 
     def generate_signal(self, df: pd.DataFrame, available_capital: float) -> Signal:
         """
-        Evaluate the latest candle data and return a trading Signal.
-
-        Args:
-            df: enriched candle DataFrame (must have ema_9, ema_21, rsi, vol_ma columns)
-            available_capital: remaining usable capital (after positions)
+        Evaluate the latest candle and return a Signal.
+        Checks for BUY (bullish breakout) and SHORT (bearish breakdown).
         """
         instrument_key = self.instrument_key
         hold = Signal("HOLD", instrument_key, "no action", 0, 0)
@@ -102,7 +110,7 @@ class ORBStrategy:
         if df.empty or len(df) < cfg.EMA_SLOW + 5:
             return hold
 
-        latest = df.iloc[-1]
+        latest  = df.iloc[-1]
         close   = float(latest["close"])
         ema9    = float(latest.get(f"ema_{cfg.EMA_FAST}", 0) or 0)
         ema21   = float(latest.get(f"ema_{cfg.EMA_SLOW}", 0) or 0)
@@ -115,80 +123,140 @@ class ORBStrategy:
             p   = self.position
             pnl = p.unrealised_pnl(close)
 
-            if close <= p.stop_loss:
+            # Stop-loss hit
+            if p.side == "BUY" and close <= p.stop_loss:
                 self.position = None
                 return Signal(
                     "EXIT", instrument_key,
-                    f"Stop-loss hit @ {close:.2f} (entry {p.entry_price:.2f}, loss {pnl:.2f})",
-                    close, p.quantity,
+                    f"Stop-loss hit @ {close:.2f} (entry {p.entry_price:.2f}, loss ₹{pnl:.2f})",
+                    close, p.quantity, side=p.side,
+                )
+            if p.side == "SHORT" and close >= p.stop_loss:
+                self.position = None
+                return Signal(
+                    "EXIT", instrument_key,
+                    f"Stop-loss hit @ {close:.2f} (entry {p.entry_price:.2f}, loss ₹{pnl:.2f})",
+                    close, p.quantity, side=p.side,
                 )
 
-            if close >= p.target:
+            # Target hit
+            if p.side == "BUY" and close >= p.target:
                 self.position = None
                 return Signal(
                     "EXIT", instrument_key,
-                    f"Target hit @ {close:.2f} (entry {p.entry_price:.2f}, profit {pnl:.2f})",
-                    close, p.quantity,
+                    f"Target hit @ {close:.2f} (entry {p.entry_price:.2f}, profit ₹{pnl:.2f})",
+                    close, p.quantity, side=p.side,
+                )
+            if p.side == "SHORT" and close <= p.target:
+                self.position = None
+                return Signal(
+                    "EXIT", instrument_key,
+                    f"Target hit @ {close:.2f} (entry {p.entry_price:.2f}, profit ₹{pnl:.2f})",
+                    close, p.quantity, side=p.side,
                 )
 
             # EMA reversal exit (trend turned against us)
-            if ema9 < ema21 and rsi < 40:
+            if p.side == "BUY" and ema9 < ema21 and rsi < 40:
                 self.position = None
                 return Signal(
                     "EXIT", instrument_key,
                     f"EMA reversal exit @ {close:.2f} (ema9={ema9:.2f} < ema21={ema21:.2f})",
-                    close, p.quantity,
+                    close, p.quantity, side=p.side,
+                )
+            if p.side == "SHORT" and ema9 > ema21 and rsi > 60:
+                self.position = None
+                return Signal(
+                    "EXIT", instrument_key,
+                    f"EMA reversal exit @ {close:.2f} (ema9={ema9:.2f} > ema21={ema21:.2f})",
+                    close, p.quantity, side=p.side,
                 )
 
             return Signal(
                 "HOLD", instrument_key,
-                f"In position | LTP={close:.2f} | P&L={pnl:.2f}",
-                close, 0,
+                f"In {p.side} position | LTP={close:.2f} | P&L=₹{pnl:.2f}",
+                close, 0, side=p.side,
             )
 
-        # ── Look for BUY entry (no open position) ─────────────────────────────
+        # ── Look for new entry (no open position) ─────────────────────────────
         if not self.or_established:
             return hold
 
-        breakout_up = close > self.or_high
-        ema_uptrend = ema9 > ema21
-        rsi_ok      = cfg.RSI_BUY_MIN <= rsi <= cfg.RSI_BUY_MAX
-        vol_ok      = volume >= vol_ma * cfg.VOLUME_MULTIPLIER
+        vol_ok = volume >= vol_ma * cfg.VOLUME_MULTIPLIER
+
+        # ── BUY: bullish breakout above OR High ───────────────────────────────
+        breakout_up  = close > (self.or_high or 0)
+        ema_uptrend  = ema9 > ema21
+        rsi_buy_ok   = cfg.RSI_BUY_MIN <= rsi <= cfg.RSI_BUY_MAX
 
         logger.debug(
-            "[%s] Signal check → close=%.2f | OR_H=%.2f | breakout=%s | "
-            "ema_up=%s | rsi=%.1f | vol_ok=%s",
+            "[%s] BUY check → close=%.2f OR_H=%.2f breakout=%s ema_up=%s rsi=%.1f vol_ok=%s",
             instrument_key, close, self.or_high or 0,
             breakout_up, ema_uptrend, rsi, vol_ok,
         )
 
-        if breakout_up and ema_uptrend and rsi_ok and vol_ok:
+        if breakout_up and ema_uptrend and rsi_buy_ok and vol_ok:
             qty = _calc_quantity(close, available_capital)
             if qty < 1:
                 return Signal(
                     "HOLD", instrument_key,
-                    f"Signal valid but insufficient capital ({available_capital:.0f}) for {close:.2f}",
+                    f"BUY signal valid but insufficient capital ({available_capital:.0f})",
                     close, 0,
                 )
-
             stop_loss = round(close * (1 - cfg.STOP_LOSS_PCT), 2)
             target    = round(close * (1 + cfg.TARGET_PCT), 2)
-
             self.position = Position(
                 instrument_key=instrument_key,
                 entry_price=close,
                 quantity=qty,
                 stop_loss=stop_loss,
                 target=target,
+                side="BUY",
             )
-
             return Signal(
                 "BUY", instrument_key,
                 (
                     f"ORB breakout above {self.or_high:.2f} | "
-                    f"EMA9={ema9:.2f} EMA21={ema21:.2f} | RSI={rsi:.1f}"
+                    f"EMA9={ema9:.2f} EMA21={ema21:.2f} | RSI={rsi:.1f} | Vol OK"
                 ),
-                close, qty, stop_loss, target,
+                close, qty, stop_loss, target, side="BUY",
+            )
+
+        # ── SHORT: bearish breakdown below OR Low ─────────────────────────────
+        breakdown_dn  = close < (self.or_low or 0)
+        ema_downtrend = ema9 < ema21
+        rsi_sell_ok   = cfg.RSI_SELL_MIN <= rsi <= cfg.RSI_SELL_MAX
+
+        logger.debug(
+            "[%s] SHORT check → close=%.2f OR_L=%.2f breakdown=%s ema_dn=%s rsi=%.1f vol_ok=%s",
+            instrument_key, close, self.or_low or 0,
+            breakdown_dn, ema_downtrend, rsi, vol_ok,
+        )
+
+        if breakdown_dn and ema_downtrend and rsi_sell_ok and vol_ok:
+            qty = _calc_quantity(close, available_capital)
+            if qty < 1:
+                return Signal(
+                    "HOLD", instrument_key,
+                    f"SHORT signal valid but insufficient capital ({available_capital:.0f})",
+                    close, 0,
+                )
+            stop_loss = round(close * (1 + cfg.STOP_LOSS_PCT), 2)   # above entry for shorts
+            target    = round(close * (1 - cfg.TARGET_PCT), 2)       # below entry for shorts
+            self.position = Position(
+                instrument_key=instrument_key,
+                entry_price=close,
+                quantity=qty,
+                stop_loss=stop_loss,
+                target=target,
+                side="SHORT",
+            )
+            return Signal(
+                "SHORT", instrument_key,
+                (
+                    f"ORB breakdown below {self.or_low:.2f} | "
+                    f"EMA9={ema9:.2f} EMA21={ema21:.2f} | RSI={rsi:.1f} | Vol OK"
+                ),
+                close, qty, stop_loss, target, side="SHORT",
             )
 
         return hold
@@ -201,8 +269,8 @@ class ORBStrategy:
             self.position = None
             return Signal(
                 "EXIT", self.instrument_key,
-                f"Force exit at market close @ {ltp:.2f} | P&L={pnl:.2f}",
-                ltp, p.quantity,
+                f"Force exit at market close @ {ltp:.2f} | P&L=₹{pnl:.2f}",
+                ltp, p.quantity, side=p.side,
             )
         return None
 
@@ -211,19 +279,15 @@ class ORBStrategy:
 
 def _calc_quantity(price: float, available_capital: float) -> int:
     """
-    Calculate how many shares to buy so that the risk (RISK_PER_TRADE)
-    maps to the STOP_LOSS_PCT move below entry.
+    Calculate shares to buy/short so that the risk (RISK_PER_TRADE)
+    maps to the STOP_LOSS_PCT move against entry.
 
-    Risk per trade = qty × price × STOP_LOSS_PCT
-    → qty = RISK_PER_TRADE / (price × STOP_LOSS_PCT)
+      qty = RISK_PER_TRADE / (price × STOP_LOSS_PCT)
 
     Also capped by available_capital / price.
     """
     if price <= 0:
         return 0
-
     qty_by_risk    = int(cfg.RISK_PER_TRADE / (price * cfg.STOP_LOSS_PCT))
     qty_by_capital = int(available_capital / price)
-    qty            = min(qty_by_risk, qty_by_capital)
-
-    return max(qty, 0)
+    return max(min(qty_by_risk, qty_by_capital), 0)
