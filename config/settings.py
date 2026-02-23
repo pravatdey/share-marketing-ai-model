@@ -36,8 +36,10 @@ DAILY_MAX_LOSS       = float(os.getenv("DAILY_MAX_LOSS", "50"))      # INR – s
 MIS_LEVERAGE = 5
 EFFECTIVE_CAPITAL = TRADING_CAPITAL * MIS_LEVERAGE   # usable buying power
 
-# Position sizing: risk ₹25 per trade (half of daily max loss)
-RISK_PER_TRADE = DAILY_MAX_LOSS / 2   # ₹25
+# Position sizing: risk 2% of effective capital per trade
+# This scales with your actual capital so qty is never zero for affordable stocks.
+# e.g. ₹1000 × 5x = ₹5000 effective → RISK_PER_TRADE = ₹100
+RISK_PER_TRADE = EFFECTIVE_CAPITAL * 0.02
 
 # ── Strategy Parameters ─────────────────────────────────────────────────────
 # Opening Range Breakout on 5-min candles (resampled from 1-min API data)
@@ -76,7 +78,7 @@ IST = pytz.timezone("Asia/Kolkata")
 
 MARKET_OPEN_TIME   = "09:15"   # Trading begins
 ORB_END_TIME       = "09:30"   # ORB observation window ends; signals start
-TRADING_STOP_TIME  = "15:00"   # No new positions after this time
+TRADING_STOP_TIME  = "15:02"   # No new positions after this time (grace period for 15:00 candle signals)
 FORCE_EXIT_TIME    = "15:10"   # Close ALL positions at this time
 MARKET_CLOSE_TIME  = "15:30"
 
