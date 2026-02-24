@@ -50,15 +50,15 @@ EMA_SLOW            = 21
 RSI_PERIOD          = 14
 
 # BUY signal: RSI must be between these values (momentum, not overbought)
-RSI_BUY_MIN         = 45
-RSI_BUY_MAX         = 70
+RSI_BUY_MIN         = 40
+RSI_BUY_MAX         = 75
 
 # SELL/Short signal: RSI must be between these values (weakness, not oversold)
-RSI_SELL_MIN        = 30
-RSI_SELL_MAX        = 55
+RSI_SELL_MIN        = 25
+RSI_SELL_MAX        = 60
 
 # Volume confirmation: current candle volume >= VOLUME_MULTIPLIER × 10-period avg
-VOLUME_MULTIPLIER   = 1.5
+VOLUME_MULTIPLIER   = 1.2
 
 # Per-trade stop loss and target (as % of entry price)
 STOP_LOSS_PCT   = 0.005   # 0.5%
@@ -68,7 +68,7 @@ TARGET_PCT      = 0.010   # 1.0% → 2:1 reward:risk ratio
 MAX_POSITIONS = 3
 
 # How many top stocks to monitor simultaneously
-TOP_N_STOCKS = 5
+TOP_N_STOCKS = 7
 
 # Maximum open positions at a time
 MAX_OPEN_POSITIONS = 1   # keep to 1 to stay within capital limits
@@ -125,10 +125,11 @@ SMTP_HOST          = "smtp.gmail.com"
 SMTP_PORT          = 587
 
 # ── Nifty 50 Instruments ────────────────────────────────────────────────────
-# Upstox instrument keys for Nifty 50 stocks (NSE_EQ segment)
+# Upstox instrument keys for stocks to trade (NSE_EQ segment)
 # Format: "NSE_EQ|<ISIN>"  — these are the correct Upstox v2 instrument keys
-# We select a curated list of liquid, volatile Nifty 50 stocks
-NIFTY50_INSTRUMENT_KEYS = [
+# Includes Nifty 50 large-caps + volatile mid-caps for more trading opportunities
+INSTRUMENT_KEYS = [
+    # ── Nifty 50 large-caps ──────────────────────────────────────────────────
     "NSE_EQ|INE467B01029",  # ADANIENT
     "NSE_EQ|INE002A01018",  # RELIANCE
     "NSE_EQ|INE040A01034",  # HDFCBANK
@@ -144,6 +145,17 @@ NIFTY50_INSTRUMENT_KEYS = [
     "NSE_EQ|INE238A01034",  # POWERGRID
     "NSE_EQ|INE242A01010",  # ONGC
     "NSE_EQ|INE101A01026",  # DRREDDY
+    # ── Mid-cap / high-volatility stocks ─────────────────────────────────────
+    "NSE_EQ|INE758T01015",  # ZOMATO
+    "NSE_EQ|INE053F01010",  # IRFC
+    "NSE_EQ|INE848E01016",  # NHPC
+    "NSE_EQ|INE669E01016",  # IDEA (Vodafone Idea)
+    "NSE_EQ|INE245A01021",  # TATAPOWER
+    "NSE_EQ|INE028A01039",  # BANKBARODA
+    "NSE_EQ|INE160A01022",  # PNB
+    "NSE_EQ|INE335Y01020",  # IRCTC
+    "NSE_EQ|INE0NT901020",  # NETWEB
+    "NSE_EQ|INE935N01020",  # DIXON
 ]
 
 # ── Logging ──────────────────────────────────────────────────────────────────

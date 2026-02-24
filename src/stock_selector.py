@@ -1,5 +1,5 @@
 """
-Stock Selector – picks and ranks the best Nifty 50 stocks to trade today.
+Stock Selector – picks and ranks the best stocks to trade today.
 
 Selection criteria (evaluated once after market open):
   1. Price affordable with our leveraged capital
@@ -28,15 +28,15 @@ class StockSelector:
 
     def get_ranked_stocks(self, top_n: int = cfg.TOP_N_STOCKS) -> list[dict]:
         """
-        Analyse all candidates in NIFTY50_INSTRUMENT_KEYS and return the top_n
+        Analyse all candidates in INSTRUMENT_KEYS and return the top_n
         ranked by ATR% (volatility), each as:
           { instrument_key, ltp, atr, atr_pct, vol_ma }
 
         Returns an empty list if none are suitable.
         """
-        logger.info("Screening Nifty 50 stocks for today's trade …")
+        logger.info("Screening stocks for today's trade …")
         candidates = self._md.get_top_volatile_stocks(
-            cfg.NIFTY50_INSTRUMENT_KEYS, top_n=top_n
+            cfg.INSTRUMENT_KEYS, top_n=top_n
         )
 
         if not candidates:
