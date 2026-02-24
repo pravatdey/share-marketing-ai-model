@@ -252,7 +252,11 @@ def main() -> None:
             if signal.action == "BUY" and can_enter and not has_open_position and signal.quantity > 0:
                 order_id = order_manager.place_order(signal, "BUY")
                 if order_id:
-                    fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
+                    fill_price = order_manager.wait_for_fill(order_id)
+                    if fill_price is None:
+                        logger.warning("BUY order %s not filled/rejected. Clearing position.", order_id)
+                        strat.position = None
+                        continue
                     entry_price[key] = fill_price
                     entry_qty[key]   = signal.quantity
                     active_key       = key
@@ -264,13 +268,21 @@ def main() -> None:
                         key, fill_price, signal.quantity,
                         signal.stop_loss, signal.target, signal.reason,
                     )
+                else:
+                    logger.warning("BUY order placement failed. Clearing position.")
+                    strat.position = None
+                    continue
                 break  # one position at a time – stop scanning other stocks
 
             # ── Execute SHORT ─────────────────────────────────────────────────
             elif signal.action == "SHORT" and can_enter and not has_open_position and signal.quantity > 0:
                 order_id = order_manager.place_order(signal, "SELL")
                 if order_id:
-                    fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
+                    fill_price = order_manager.wait_for_fill(order_id)
+                    if fill_price is None:
+                        logger.warning("SHORT order %s not filled/rejected. Clearing position.", order_id)
+                        strat.position = None
+                        continue
                     entry_price[key] = fill_price
                     entry_qty[key]   = signal.quantity
                     active_key       = key
@@ -282,6 +294,10 @@ def main() -> None:
                         key, fill_price, signal.quantity,
                         signal.stop_loss, signal.target, signal.reason,
                     )
+                else:
+                    logger.warning("SHORT order placement failed. Clearing position.")
+                    strat.position = None
+                    continue
                 break  # one position at a time – stop scanning other stocks
 
             # ── Execute EXIT (stop-loss / target / EMA reversal) ──────────────
@@ -290,7 +306,23 @@ def main() -> None:
                 close_side = "SELL" if signal.side == "BUY" else "BUY"
                 order_id = order_manager.place_order(signal, close_side)
                 if order_id:
-                    fill_price = order_manager.wait_for_fill(order_id) or signal.ltp
+                    fill_price = order_manager.wait_for_fill(order_id)
+                    if fill_price is None:
+                        logger.warning(
+                            "EXIT order %s not filled/rejected. Restoring position for %s.",
+                            order_id, key,
+                        )
+                        # Restore the position that generate_signal() already cleared
+                        from src.strategy import Position
+                        strat.position = Position(
+                            instrument_key=key,
+                            entry_price=entry_price[key],
+                            quantity=entry_qty[key],
+                            stop_loss=signal.stop_loss,
+                            target=signal.target,
+                            side=signal.side,
+                        )
+                        continue
                     pnl = risk_manager.record_trade(
                         key, signal.side,
                         entry_price[key], fill_price, signal.quantity, signal.reason,
