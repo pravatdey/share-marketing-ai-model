@@ -3,7 +3,7 @@ Order Manager – places and tracks buy/sell orders via the Upstox v2 REST API.
 
 Order types used:
   - MARKET order (instant fill at best available price)
-  - Product type: MIS (Margin Intraday Square-off) for intraday leverage
+  - Product type: I (Intraday) for intraday leverage
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class OrderManager:
         transaction_type: str,   # "BUY" or "SELL"
     ) -> Optional[str]:
         """
-        Place a MARKET MIS order.
+        Place a MARKET Intraday order.
 
         Args:
             signal: Signal object with instrument_key, quantity, ltp.
@@ -52,7 +52,7 @@ class OrderManager:
 
         payload = {
             "quantity":         signal.quantity,
-            "product":          "MIS",          # intraday margin order
+            "product":          "I",            # Intraday order (Upstox v2)
             "validity":         "DAY",
             "price":            0,              # 0 = market price
             "tag":              "auto_bot",
@@ -147,7 +147,7 @@ class OrderManager:
             return []
 
     def exit_all_positions(self) -> None:
-        """Square off ALL open MIS positions (used at forced exit time)."""
+        """Square off ALL open Intraday positions (used at forced exit time)."""
         positions = self.get_positions()
         if not positions:
             logger.info("No open positions to exit.")

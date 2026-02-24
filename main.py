@@ -21,7 +21,7 @@ Execution flow (runs inside GitHub Actions every weekday):
 Safety rules:
   ∙ Stop and exit once ₹50 cumulative profit is realised
   ∙ Stop and exit if cumulative loss >= ₹50
-  ∙ Never hold positions overnight (MIS order type)
+  ∙ Never hold positions overnight (Intraday order type)
   ∙ Max 1 open position at a time
 """
 
