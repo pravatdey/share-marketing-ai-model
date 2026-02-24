@@ -68,7 +68,7 @@ TARGET_PCT      = 0.010   # 1.0% → 2:1 reward:risk ratio
 MAX_POSITIONS = 3
 
 # How many top stocks to monitor simultaneously
-TOP_N_STOCKS = 7
+TOP_N_STOCKS = 25
 
 # Maximum open positions at a time
 MAX_OPEN_POSITIONS = 1   # keep to 1 to stay within capital limits
