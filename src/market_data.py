@@ -135,7 +135,8 @@ class MarketData:
     @staticmethod
     def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         """
-        Add EMA(9), EMA(21), RSI(14), ATR(14), and Volume MA(10) to a candle DataFrame.
+        Add EMA(9), EMA(21), RSI(14), ATR(14), Volume MA(10), and VWAP
+        to a candle DataFrame.
         Returns the enriched DataFrame (in-place modification).
         """
         if df.empty or len(df) < cfg.EMA_SLOW + 5:
@@ -146,6 +147,13 @@ class MarketData:
         df["rsi"]    = ta.rsi(df["close"], length=cfg.RSI_PERIOD)
         df["atr"]    = ta.atr(df["high"], df["low"], df["close"], length=14)
         df["vol_ma"] = df["volume"].rolling(window=10).mean()
+
+        # VWAP = cumulative(typical_price × volume) / cumulative(volume)
+        typical_price = (df["high"] + df["low"] + df["close"]) / 3
+        cum_vol = df["volume"].cumsum()
+        cum_tp_vol = (typical_price * df["volume"]).cumsum()
+        df["vwap"] = cum_tp_vol / cum_vol.replace(0, float("nan"))
+
         return df
 
     # ── Opening Range ─────────────────────────────────────────────────────────

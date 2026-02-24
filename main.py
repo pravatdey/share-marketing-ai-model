@@ -2,25 +2,28 @@
 Upstox Auto Trading Bot – Main Entry Point
 ==========================================
 
-Goal: Earn ₹50 profit per day. Exit the market as soon as that is achieved.
-      Never hold overnight. Stop immediately if loss reaches ₹50.
+Goal: Earn ₹50 profit per day with minimal risk. Exit immediately on target.
 
 Execution flow (runs inside GitHub Actions every weekday):
 
   9:10 AM IST  – Bot starts, authenticates with Upstox
   9:15 AM IST  – Market opens
-  9:15–9:30 AM – Collects first 3 five-minute candles for each stock → builds Opening Range
-  9:30 AM+     – Scans ALL top-N stocks every 5 minutes for BUY or SHORT signals
-                 ∙ Takes the FIRST valid signal found (BUY or SHORT)
-                 ∙ Exits on stop-loss / target / EMA-reversal / ₹50 daily profit
-                 ∙ Once a position is closed, immediately re-scans all stocks for next opportunity
-  3:00 PM IST  – No new entries after this time
+  9:15–9:35 AM – Collects first 4 five-minute candles → builds Opening Range
+  9:35 AM+     – Scans ALL 50 stocks every 60 seconds for BUY or SHORT signals
+                 ∙ Multi-layer confirmation: ORB + EMA + RSI + Volume + VWAP
+                 ∙ ATR-based dynamic stop loss and position sizing
+                 ∙ Trailing stop after 1R profit (moves to breakeven, then trails)
+                 ∙ Exits on stop / target / EMA-reversal / ₹50 daily profit
+  12:00–1:30 PM – Mid-day pause (no new entries during low-volume period)
+  2:30 PM IST  – No new entries after this time
   3:10 PM IST  – Force-exit ALL open positions
   3:15 PM IST  – Sends daily email summary and exits
 
 Safety rules:
-  ∙ Stop and exit once ₹50 cumulative profit is realised
-  ∙ Stop and exit if cumulative loss >= ₹50
+  ∙ ₹50 daily profit target → stop trading
+  ∙ ₹50 daily max loss → stop trading
+  ∙ Max 3 trades per day → prevent overtrading
+  ∙ 3 consecutive losses → kill switch (strategy misaligned)
   ∙ Never hold positions overnight (Intraday order type)
   ∙ Max 1 open position at a time
 """
@@ -197,6 +200,16 @@ def main() -> None:
                 )
                 notifier.notify_profit_target_hit(risk_manager.realised_pnl)
                 break
+            if risk_manager.is_max_trades_hit():
+                logger.info("Max trades per day reached (%d). Done for today.", cfg.MAX_TRADES_PER_DAY)
+                break
+            if risk_manager.is_consecutive_loss_hit():
+                logger.warning(
+                    "Kill switch: %d consecutive losses. Strategy misaligned. Stopping.",
+                    risk_manager.consecutive_losses,
+                )
+                order_manager.exit_all_positions()
+                break
 
         # ── Establish Opening Range for each stock (after 9:30 AM) ────────────
         if _past_time(cfg.ORB_END_TIME):
@@ -218,10 +231,19 @@ def main() -> None:
                 open_pnl = strategies[active_key].position.unrealised_pnl(ltp)
                 risk_manager.update_open_pnl(open_pnl)
 
-        # ── No new entries after TRADING_STOP_TIME ────────────────────────────
-        # Evaluated ONCE per cycle so a clock crossing 15:00 mid-loop doesn't
-        # silently zero out capital for later stocks in the same scan.
-        can_enter = not _past_time(cfg.TRADING_STOP_TIME) and risk_manager.can_trade()
+        # ── No new entries after TRADING_STOP_TIME or during mid-day pause ────
+        in_mid_day_pause = (
+            _past_time(cfg.MID_DAY_PAUSE_START)
+            and not _past_time(cfg.MID_DAY_PAUSE_END)
+        )
+        if in_mid_day_pause and active_key is None:
+            logger.info("[%s] Mid-day pause (12:00–13:30). Skipping new entries.", now_str)
+
+        can_enter = (
+            not _past_time(cfg.TRADING_STOP_TIME)
+            and not in_mid_day_pause
+            and risk_manager.can_trade()
+        )
 
         # Evaluated ONCE per cycle – only changes when an order is actually placed.
         has_open_position = active_key is not None and strategies[active_key].position is not None
@@ -261,9 +283,15 @@ def main() -> None:
                     entry_qty[key]   = signal.quantity
                     active_key       = key
                     if strat.position:
+                        # Recalculate ATR-based stops from actual fill price
+                        from src.strategy import _calc_stop_target
+                        atr_val = float(df.iloc[-1].get("atr", 0) or 0)
+                        sl, tgt, risk = _calc_stop_target(fill_price, atr_val, "BUY")
                         strat.position.entry_price = fill_price
-                        strat.position.stop_loss   = round(fill_price * (1 - cfg.STOP_LOSS_PCT), 2)
-                        strat.position.target      = round(fill_price * (1 + cfg.TARGET_PCT), 2)
+                        strat.position.stop_loss   = sl
+                        strat.position.target      = tgt
+                        strat.position.initial_risk = risk
+                        strat.position.peak_price  = fill_price
                     notifier.notify_trade_entry(
                         key, fill_price, signal.quantity,
                         signal.stop_loss, signal.target, signal.reason,
@@ -287,9 +315,14 @@ def main() -> None:
                     entry_qty[key]   = signal.quantity
                     active_key       = key
                     if strat.position:
+                        from src.strategy import _calc_stop_target
+                        atr_val = float(df.iloc[-1].get("atr", 0) or 0)
+                        sl, tgt, risk = _calc_stop_target(fill_price, atr_val, "SHORT")
                         strat.position.entry_price = fill_price
-                        strat.position.stop_loss   = round(fill_price * (1 + cfg.STOP_LOSS_PCT), 2)
-                        strat.position.target      = round(fill_price * (1 - cfg.TARGET_PCT), 2)
+                        strat.position.stop_loss   = sl
+                        strat.position.target      = tgt
+                        strat.position.initial_risk = risk
+                        strat.position.peak_price  = fill_price
                     notifier.notify_trade_entry(
                         key, fill_price, signal.quantity,
                         signal.stop_loss, signal.target, signal.reason,

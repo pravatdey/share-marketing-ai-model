@@ -1,8 +1,10 @@
 """
 Risk Manager – tracks daily Profit & Loss (P&L), enforces:
-  • Daily profit target  (₹50 → stop all new trades)
-  • Daily max loss limit (₹50 → stop all new trades, protect capital)
-  • Position sizing guard
+  - Daily profit target  (₹50 → stop all new trades)
+  - Daily max loss limit (₹50 → stop all new trades, protect capital)
+  - Max trades per day   (3 → prevent overtrading)
+  - Consecutive loss kill switch (3 losses in a row → stop)
+  - Position sizing guard
 """
 
 from __future__ import annotations
@@ -23,13 +25,14 @@ class RiskManager:
         self.trades: list[dict] = []      # log of completed trades
         self.total_trades      = 0
         self.winning_trades    = 0
+        self.consecutive_losses = 0       # reset on a winning trade
 
     # ── P&L Tracking ─────────────────────────────────────────────────────────
 
     def record_trade(
         self,
         instrument_key: str,
-        side: str,            # "BUY"
+        side: str,            # "BUY" or "SHORT"
         entry_price: float,
         exit_price: float,
         quantity: int,
@@ -45,6 +48,9 @@ class RiskManager:
         self.total_trades  += 1
         if pnl > 0:
             self.winning_trades += 1
+            self.consecutive_losses = 0
+        elif pnl < 0:
+            self.consecutive_losses += 1
 
         trade = {
             "instrument_key": instrument_key,
@@ -59,9 +65,10 @@ class RiskManager:
 
         logger.info(
             "Trade closed → %s %s × %d | entry=%.2f exit=%.2f | P&L=%.2f | "
-            "Total P&L=%.2f",
+            "Total P&L=%.2f | Consec losses=%d",
             side, instrument_key, quantity,
             entry_price, exit_price, pnl, self.realised_pnl,
+            self.consecutive_losses,
         )
         return pnl
 
@@ -97,36 +104,73 @@ class RiskManager:
             )
         return hit
 
+    def is_max_trades_hit(self) -> bool:
+        """Return True if total trades today >= MAX_TRADES_PER_DAY."""
+        hit = self.total_trades >= cfg.MAX_TRADES_PER_DAY
+        if hit:
+            logger.info(
+                "*** MAX TRADES HIT *** %d trades placed (limit=%d). "
+                "No more trades today.",
+                self.total_trades, cfg.MAX_TRADES_PER_DAY,
+            )
+        return hit
+
+    def is_consecutive_loss_hit(self) -> bool:
+        """Return True if consecutive losses >= MAX_CONSECUTIVE_LOSSES (kill switch)."""
+        hit = self.consecutive_losses >= cfg.MAX_CONSECUTIVE_LOSSES
+        if hit:
+            logger.warning(
+                "*** KILL SWITCH *** %d consecutive losses (limit=%d). "
+                "Strategy misaligned with market. Stopping.",
+                self.consecutive_losses, cfg.MAX_CONSECUTIVE_LOSSES,
+            )
+        return hit
+
     def can_trade(self) -> bool:
-        """Return True if neither the profit target nor max loss has been reached."""
-        return not self.is_profit_target_hit() and not self.is_max_loss_hit()
+        """Return True if none of the risk limits have been reached."""
+        return (
+            not self.is_profit_target_hit()
+            and not self.is_max_loss_hit()
+            and not self.is_max_trades_hit()
+            and not self.is_consecutive_loss_hit()
+        )
 
     # ── Summary ───────────────────────────────────────────────────────────────
 
     def summary(self) -> dict:
         return {
-            "date":            self.trade_date.isoformat(),
-            "realised_pnl":    round(self.realised_pnl, 2),
-            "open_pnl":        round(self.open_pnl, 2),
-            "total_pnl":       self.total_pnl,
-            "total_trades":    self.total_trades,
-            "winning_trades":  self.winning_trades,
-            "trades":          self.trades,
-            "profit_hit":      self.is_profit_target_hit(),
-            "loss_hit":        self.is_max_loss_hit(),
+            "date":               self.trade_date.isoformat(),
+            "realised_pnl":       round(self.realised_pnl, 2),
+            "open_pnl":           round(self.open_pnl, 2),
+            "total_pnl":          self.total_pnl,
+            "total_trades":       self.total_trades,
+            "winning_trades":     self.winning_trades,
+            "consecutive_losses": self.consecutive_losses,
+            "trades":             self.trades,
+            "profit_hit":         self.is_profit_target_hit(),
+            "loss_hit":           self.is_max_loss_hit(),
+            "max_trades_hit":     self.is_max_trades_hit(),
+            "kill_switch":        self.is_consecutive_loss_hit(),
         }
 
     def summary_text(self) -> str:
         s = self.summary()
+        win_rate = (
+            f"{s['winning_trades']/s['total_trades']*100:.0f}%"
+            if s["total_trades"] > 0 else "N/A"
+        )
         lines = [
-            f"Date           : {s['date']}",
-            f"Realised P&L   : ₹{s['realised_pnl']:.2f}",
-            f"Open P&L       : ₹{s['open_pnl']:.2f}",
-            f"Total P&L      : ₹{s['total_pnl']:.2f}",
-            f"Total Trades   : {s['total_trades']}",
-            f"Winning Trades : {s['winning_trades']}",
-            f"Profit Target  : {'HIT ✓' if s['profit_hit'] else 'Not yet'}",
-            f"Max Loss       : {'HIT ✗' if s['loss_hit'] else 'Safe'}",
+            f"Date              : {s['date']}",
+            f"Realised P&L      : ₹{s['realised_pnl']:.2f}",
+            f"Open P&L          : ₹{s['open_pnl']:.2f}",
+            f"Total P&L         : ₹{s['total_pnl']:.2f}",
+            f"Total Trades      : {s['total_trades']}",
+            f"Winning Trades    : {s['winning_trades']} ({win_rate})",
+            f"Consec Losses     : {s['consecutive_losses']}",
+            f"Profit Target     : {'HIT' if s['profit_hit'] else 'Not yet'}",
+            f"Max Loss          : {'HIT' if s['loss_hit'] else 'Safe'}",
+            f"Max Trades        : {'HIT' if s['max_trades_hit'] else 'OK'}",
+            f"Kill Switch       : {'TRIGGERED' if s['kill_switch'] else 'OK'}",
         ]
         if s["trades"]:
             lines.append("\nTrade Details:")
