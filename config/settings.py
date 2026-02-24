@@ -83,7 +83,7 @@ FORCE_EXIT_TIME    = "15:10"   # Close ALL positions at this time
 MARKET_CLOSE_TIME  = "15:30"
 
 # Polling interval in seconds (check every 5 minutes)
-POLL_INTERVAL_SECS = 300
+POLL_INTERVAL_SECS = 60
 
 # ── NSE Holidays 2025-2026 ──────────────────────────────────────────────────
 NSE_HOLIDAYS = {
