@@ -67,7 +67,12 @@ class OrderManager:
         url = f"{cfg.UPSTOX_BASE_URL}/order/place"
         try:
             resp = requests.post(url, json=payload, headers=self._headers, timeout=15)
-            resp.raise_for_status()
+            if resp.status_code != 200:
+                logger.error(
+                    "Order placement failed [%d]: %s | payload: %s",
+                    resp.status_code, resp.text, payload,
+                )
+                return None
         except requests.RequestException as exc:
             logger.error("Order placement failed: %s", exc)
             return None
