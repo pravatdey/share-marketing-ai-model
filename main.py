@@ -250,6 +250,11 @@ def main() -> None:
 
         # ── Scan each stock for signals ───────────────────────────────────────
         for key in instrument_keys:
+            # Re-check force exit time inside the loop (scanning 50 stocks is slow)
+            if _past_time(cfg.FORCE_EXIT_TIME):
+                logger.info("Force exit time reached mid-scan. Breaking out.")
+                break
+
             strat = strategies[key]
 
             if not or_established[key]:
@@ -386,6 +391,14 @@ def main() -> None:
                         notifier.notify_max_loss_hit(risk_manager.total_pnl)
                         break  # exit for-loop; outer while will also break
 
+        # ── Check if we should stop before sleeping ────────────────────────
+        if _past_time(cfg.FORCE_EXIT_TIME):
+            logger.info("Force exit time – exiting main loop.")
+            break
+        if not risk_manager.can_trade():
+            logger.info("Risk limit reached – exiting main loop.")
+            break
+
         # ── Sleep until next poll ─────────────────────────────────────────────
         logger.info("Next check in %d seconds …", cfg.POLL_INTERVAL_SECS)
         time.sleep(cfg.POLL_INTERVAL_SECS)
@@ -395,6 +408,7 @@ def main() -> None:
     logger.info("\n%s", summary)
     notifier.notify_daily_summary(summary)
     logger.info("Bot finished for the day. Goodbye!")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
