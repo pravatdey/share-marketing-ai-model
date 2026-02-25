@@ -6,6 +6,7 @@ All environment variables are loaded here. Never hardcode secrets.
 import os
 from dotenv import load_dotenv
 import pytz
+import requests
 
 load_dotenv()
 
@@ -138,64 +139,73 @@ EMAIL_RECEIVER     = os.getenv("EMAIL_RECEIVER", "")
 SMTP_HOST          = "smtp.gmail.com"
 SMTP_PORT          = 587
 
-# ── Nifty 50 Instruments ────────────────────────────────────────────────────
-# Upstox instrument keys for stocks to trade (NSE_EQ segment)
-# Format: "NSE_EQ|<ISIN>"  — these are the correct Upstox v2 instrument keys
-# Includes Nifty 50 large-caps + volatile mid-caps for more trading opportunities
-INSTRUMENT_KEYS = [
+# ── Stock Watchlist (Trading Symbols) ──────────────────────────────────────
+# These trading symbols are resolved to Upstox instrument keys at startup
+# via the Upstox instruments master file. This avoids hardcoding ISINs which
+# can change due to corporate actions (mergers, demergers, renaming).
+WATCHLIST_SYMBOLS = [
     # ── Nifty 50 large-caps ──────────────────────────────────────────────────
-    "NSE_EQ|INE467B01029",  # ADANIENT
-    "NSE_EQ|INE002A01018",  # RELIANCE
-    "NSE_EQ|INE040A01034",  # HDFCBANK
-    "NSE_EQ|INE009A01021",  # INFY
-    "NSE_EQ|INE062A01020",  # SBIN
-    "NSE_EQ|INE585B01010",  # AXISBANK
-    "NSE_EQ|INE018A01030",  # BAJFINANCE
-    "NSE_EQ|INE244E01016",  # WIPRO
-    "NSE_EQ|INE117A01022",  # TATAMOTORS
-    "NSE_EQ|INE081A01020",  # TATASTEEL
-    "NSE_EQ|INE019A01038",  # MARUTI
-    "NSE_EQ|INE158A01026",  # SUNPHARMA
-    "NSE_EQ|INE238A01034",  # POWERGRID
-    "NSE_EQ|INE242A01010",  # ONGC
-    "NSE_EQ|INE101A01026",  # DRREDDY
-    "NSE_EQ|INE154A01025",  # ITC
-    "NSE_EQ|INE090A01021",  # ICICIBANK
-    "NSE_EQ|INE176A01028",  # KOTAKBANK
-    "NSE_EQ|INE030A01027",  # HINDUNILVR
-    "NSE_EQ|INE021A01026",  # ASIANPAINT
-    "NSE_EQ|INE726G01019",  # LTIM (LTIMindtree)
-    "NSE_EQ|INE669C01036",  # TECHM
-    "NSE_EQ|INE397D01024",  # BHARTIARTL
-    "NSE_EQ|INE003A01024",  # HCLTECH
-    "NSE_EQ|INE481G01011",  # ULTRACEMCO
-    "NSE_EQ|INE029A01011",  # BPCL
-    "NSE_EQ|INE213A01029",  # BAJAJFINSV
-    "NSE_EQ|INE121A01024",  # COALINDIA
-    "NSE_EQ|INE044A01036",  # GRASIM
-    "NSE_EQ|INE152A01029",  # NTPC
-    "NSE_EQ|INE775A01035",  # JSWSTEEL
-    "NSE_EQ|INE047A01021",  # HINDALCO
-    "NSE_EQ|INE038A01020",  # BAJAJ-AUTO
+    "ADANIENT", "RELIANCE", "HDFCBANK", "INFY", "SBIN", "AXISBANK",
+    "BAJFINANCE", "WIPRO", "TATASTEEL", "MARUTI", "SUNPHARMA", "POWERGRID",
+    "ONGC", "DRREDDY", "ITC", "ICICIBANK", "KOTAKBANK", "HINDUNILVR",
+    "ASIANPAINT", "LTIM", "TECHM", "BHARTIARTL", "HCLTECH", "ULTRACEMCO",
+    "BPCL", "BAJAJFINSV", "COALINDIA", "GRASIM", "NTPC", "JSWSTEEL",
+    "HINDALCO", "BAJAJ-AUTO",
+    # ── Tata Motors demerged into TMCV + TMPV ────────────────────────────────
+    "TMCV", "TMPV",
     # ── Mid-cap / high-volatility stocks ─────────────────────────────────────
-    "NSE_EQ|INE758T01015",  # ZOMATO
-    "NSE_EQ|INE053F01010",  # IRFC
-    "NSE_EQ|INE848E01016",  # NHPC
-    "NSE_EQ|INE669E01016",  # IDEA (Vodafone Idea)
-    "NSE_EQ|INE245A01021",  # TATAPOWER
-    "NSE_EQ|INE160A01022",  # PNB
-    "NSE_EQ|INE335Y01020",  # IRCTC
-    "NSE_EQ|INE0NT901020",  # NETWEB
-    "NSE_EQ|INE935N01020",  # DIXON
-    "NSE_EQ|INE860A01027",  # HDFCLIFE
-    "NSE_EQ|INE261F01014",  # SBILIFE
-    "NSE_EQ|INE126A01031",  # VEDL
-    "NSE_EQ|INE128A01029",  # GAIL
-    "NSE_EQ|INE114A01011",  # SAIL
-    "NSE_EQ|INE192A01025",  # RECLTD
-    "NSE_EQ|INE020B01018",  # INDUSINDBK
-    "NSE_EQ|INE774D01024",  # TITAN
+    "ETERNAL",  # formerly ZOMATO
+    "IRFC", "NHPC", "IDEA", "TATAPOWER", "PNB", "IRCTC",
+    "NETWEB", "DIXON", "HDFCLIFE", "SBILIFE", "VEDL", "GAIL", "SAIL",
+    "RECLTD", "INDUSINDBK", "TITAN",
 ]
+
+# Instrument keys are populated at startup by resolve_instrument_keys()
+INSTRUMENT_KEYS: list[str] = []
+
+
+def resolve_instrument_keys() -> list[str]:
+    """
+    Download the Upstox NSE instruments master file and resolve
+    WATCHLIST_SYMBOLS to their current instrument keys (NSE_EQ|<ISIN>).
+    Updates INSTRUMENT_KEYS in-place and returns the list.
+    """
+    import gzip
+    import json
+    import logging
+
+    _logger = logging.getLogger(__name__)
+
+    instruments_url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+    try:
+        resp = requests.get(instruments_url, timeout=30)
+        resp.raise_for_status()
+        data = json.loads(gzip.decompress(resp.content))
+    except Exception as exc:
+        _logger.error("Failed to download Upstox instruments file: %s", exc)
+        return []
+
+    # Build symbol → instrument_key lookup for NSE equities
+    symbol_to_key = {}
+    for item in data:
+        if item.get("segment") == "NSE_EQ" and item.get("instrument_type") == "EQ":
+            symbol_to_key[item["trading_symbol"]] = item["instrument_key"]
+
+    resolved = []
+    for sym in WATCHLIST_SYMBOLS:
+        key = symbol_to_key.get(sym)
+        if key:
+            resolved.append(key)
+        else:
+            _logger.warning("Symbol %s not found in Upstox instruments file — skipped", sym)
+
+    _logger.info("Resolved %d / %d watchlist symbols to instrument keys", len(resolved), len(WATCHLIST_SYMBOLS))
+
+    # Update the module-level list in-place
+    global INSTRUMENT_KEYS
+    INSTRUMENT_KEYS.clear()
+    INSTRUMENT_KEYS.extend(resolved)
+    return resolved
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 LOG_FILE  = "logs/trading.log"

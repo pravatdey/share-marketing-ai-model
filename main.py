@@ -127,6 +127,15 @@ def main() -> None:
         notifier.notify_error(f"Authentication failed:\n{exc}")
         sys.exit(1)
 
+    # ── Resolve instrument keys from Upstox master file ────────────────────────
+    logger.info("Resolving instrument keys from Upstox instruments master …")
+    resolved = cfg.resolve_instrument_keys()
+    if not resolved:
+        logger.error("Failed to resolve any instrument keys. Exiting.")
+        notifier.notify_error("Failed to resolve instrument keys from Upstox master file.")
+        sys.exit(1)
+    logger.info("Resolved %d instrument keys for trading", len(resolved))
+
     # ── Component initialisation ──────────────────────────────────────────────
     market_data    = MarketData(access_token)
     order_manager  = OrderManager(access_token)
