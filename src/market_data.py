@@ -184,9 +184,15 @@ class MarketData:
           { instrument_key, ltp, atr, vol_ma }
         """
         candidates = []
+        skipped_candles = 0
+        skipped_price = 0
         for key in instrument_keys:
             df = self.get_candles(key)
-            if df.empty or len(df) < cfg.EMA_SLOW + 5:
+            # Screening only needs ATR (14 periods) + a few spare candles.
+            # The stricter EMA_SLOW+5 check is enforced later in add_indicators
+            # and in the strategy signal generation when full indicators are needed.
+            if df.empty or len(df) < 15:
+                skipped_candles += 1
                 continue
             df = self.add_indicators(df)
             latest = df.iloc[-1]
@@ -197,6 +203,7 @@ class MarketData:
             # Skip stocks where even the smallest lot (1 share) exceeds our capital
             max_affordable_price = cfg.EFFECTIVE_CAPITAL
             if ltp > max_affordable_price:
+                skipped_price += 1
                 continue
 
             candidates.append(
@@ -208,6 +215,11 @@ class MarketData:
                     "vol_ma":         round(vol_ma, 0),
                 }
             )
+
+        logger.info(
+            "Screening done: %d candidates, %d skipped (insufficient candles), %d skipped (price > ₹%.0f)",
+            len(candidates), skipped_candles, skipped_price, cfg.EFFECTIVE_CAPITAL,
+        )
 
         # Sort by ATR% descending (most volatile first)
         candidates.sort(key=lambda x: x["atr_pct"], reverse=True)
