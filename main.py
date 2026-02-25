@@ -200,6 +200,21 @@ def main() -> None:
             if risk_manager.is_max_loss_hit():
                 logger.warning("Max daily loss hit. Exiting all positions and stopping.")
                 order_manager.exit_all_positions()
+                # Book the open position so the loss is realised and reported
+                if active_key and strategies[active_key].position:
+                    ltp = market_data.get_ltp(active_key) or entry_price[active_key]
+                    pnl = risk_manager.record_trade(
+                        active_key, strategies[active_key].position.side,
+                        entry_price[active_key], ltp, entry_qty[active_key],
+                        "max-loss exit",
+                    )
+                    notifier.notify_trade_exit(
+                        active_key, entry_price[active_key], ltp,
+                        entry_qty[active_key], pnl,
+                        "Max loss exit", risk_manager.realised_pnl,
+                    )
+                    strategies[active_key].position = None
+                    active_key = None
                 notifier.notify_max_loss_hit(risk_manager.total_pnl)
                 break
             if risk_manager.is_profit_target_hit():
@@ -218,6 +233,21 @@ def main() -> None:
                     risk_manager.consecutive_losses,
                 )
                 order_manager.exit_all_positions()
+                # Book the open position
+                if active_key and strategies[active_key].position:
+                    ltp = market_data.get_ltp(active_key) or entry_price[active_key]
+                    pnl = risk_manager.record_trade(
+                        active_key, strategies[active_key].position.side,
+                        entry_price[active_key], ltp, entry_qty[active_key],
+                        "kill-switch exit",
+                    )
+                    notifier.notify_trade_exit(
+                        active_key, entry_price[active_key], ltp,
+                        entry_qty[active_key], pnl,
+                        "Kill switch exit", risk_manager.realised_pnl,
+                    )
+                    strategies[active_key].position = None
+                    active_key = None
                 break
 
         # ── Establish Opening Range for each stock (after 9:30 AM) ────────────

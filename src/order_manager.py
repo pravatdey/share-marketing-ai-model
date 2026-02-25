@@ -141,7 +141,9 @@ class OrderManager:
         try:
             resp = requests.get(url, headers=self._headers, timeout=10)
             resp.raise_for_status()
-            return resp.json().get("data", [])
+            raw = resp.json()
+            logger.info("Positions API response: %s", raw)
+            return raw.get("data", [])
         except Exception as exc:
             logger.error("Failed to fetch positions: %s", exc)
             return []
@@ -150,9 +152,10 @@ class OrderManager:
         """Square off ALL open Intraday positions (used at forced exit time)."""
         positions = self.get_positions()
         if not positions:
-            logger.info("No open positions to exit.")
+            logger.warning("No open positions returned from Upstox API – nothing to exit.")
             return
 
+        exited = 0
         for pos in positions:
             qty       = abs(int(pos.get("quantity", 0)))
             inst_key  = pos.get("instrument_token", "")
@@ -167,14 +170,30 @@ class OrderManager:
                 "instrument_key": inst_key,
                 "quantity": qty,
                 "ltp": pos.get("last_price", 0),
-                "reason": "force-exit at market close",
+                "reason": "force-exit",
             })()
 
-            self.place_order(dummy_signal, transaction_type)   # type: ignore
-            logger.info(
-                "Force-exiting %s × %d via %s order",
-                inst_key, qty, transaction_type,
-            )
+            order_id = self.place_order(dummy_signal, transaction_type)   # type: ignore
+            if order_id:
+                fill = self.wait_for_fill(order_id)
+                if fill:
+                    logger.info(
+                        "Force-exited %s × %d via %s @ %.2f",
+                        inst_key, qty, transaction_type, fill,
+                    )
+                    exited += 1
+                else:
+                    logger.error(
+                        "Force-exit order %s NOT filled for %s × %d",
+                        order_id, inst_key, qty,
+                    )
+            else:
+                logger.error(
+                    "Force-exit order FAILED to place for %s × %d",
+                    inst_key, qty,
+                )
+
+        logger.info("Force-exit complete: %d / %d positions closed.", exited, len(positions))
 
     # ── Today's Summary ───────────────────────────────────────────────────────
 
