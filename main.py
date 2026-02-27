@@ -270,6 +270,62 @@ def main() -> None:
                 open_pnl = strategies[active_key].position.unrealised_pnl(ltp)
                 risk_manager.update_open_pnl(open_pnl)
 
+                # ── Real-time stop-loss check using live LTP ────────────────
+                # The strategy checks stops on 5-min candle close, but price
+                # can gap past the stop between candles. Check LTP directly.
+                p = strategies[active_key].position
+                should_exit = False
+                if p.side == "BUY" and ltp <= p.stop_loss:
+                    should_exit = True
+                elif p.side == "SHORT" and ltp >= p.stop_loss:
+                    should_exit = True
+
+                if should_exit:
+                    logger.warning(
+                        "LIVE STOP-LOSS HIT for %s | LTP=%.2f | SL=%.2f | Exiting immediately.",
+                        active_key, ltp, p.stop_loss,
+                    )
+                    close_side = "SELL" if p.side == "BUY" else "BUY"
+                    exit_signal = Signal(
+                        "EXIT", active_key,
+                        f"Live stop-loss hit @ LTP={ltp:.2f} (SL={p.stop_loss:.2f})",
+                        ltp, p.quantity, side=p.side,
+                    )
+                    order_id = order_manager.place_order(exit_signal, close_side)
+                    if order_id:
+                        fill_price = order_manager.wait_for_fill(order_id)
+                        if fill_price is None:
+                            fill_price = ltp  # use LTP as fallback
+                        pnl = risk_manager.record_trade(
+                            active_key, p.side,
+                            entry_price[active_key], fill_price,
+                            entry_qty[active_key], "live stop-loss exit",
+                        )
+                        risk_manager.update_open_pnl(0)
+                        notifier.notify_trade_exit(
+                            active_key, entry_price[active_key], fill_price,
+                            entry_qty[active_key], pnl,
+                            "Live stop-loss exit", risk_manager.realised_pnl,
+                        )
+                    else:
+                        # Order failed – force exit via bulk API
+                        logger.error("Live SL exit order failed – using bulk exit.")
+                        order_manager.exit_all_positions()
+                        pnl = risk_manager.record_trade(
+                            active_key, p.side,
+                            entry_price[active_key], ltp,
+                            entry_qty[active_key], "emergency stop-loss exit",
+                        )
+                        risk_manager.update_open_pnl(0)
+
+                    strategies[active_key].position = None
+                    entry_price[active_key] = 0.0
+                    entry_qty[active_key] = 0
+                    active_key = None
+                    # Re-check risk limits after exit
+                    if not risk_manager.can_trade():
+                        continue  # will hit risk-limit check at top of loop
+
         # ── No new entries after TRADING_STOP_TIME or during mid-day pause ────
         in_mid_day_pause = (
             _past_time(cfg.MID_DAY_PAUSE_START)

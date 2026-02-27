@@ -245,14 +245,38 @@ class ORBStrategy:
         if not self.or_established:
             return hold
 
+        # ── Quality filters: skip low-quality setups ─────────────────────────
+        or_range = (self.or_high or 0) - (self.or_low or 0)
+        or_range_pct = or_range / close if close > 0 else 0
+        atr_pct = atr / close if close > 0 else 0
+
+        # Skip if Opening Range is too narrow (choppy, fakeout-prone)
+        if or_range_pct < cfg.MIN_OR_RANGE_PCT:
+            return Signal(
+                "HOLD", instrument_key,
+                f"OR range too narrow ({or_range_pct:.4f} < {cfg.MIN_OR_RANGE_PCT})",
+                close, 0,
+            )
+
+        # Skip if ATR is too low (noise will dominate)
+        if atr_pct < cfg.MIN_ATR_PCT:
+            return Signal(
+                "HOLD", instrument_key,
+                f"ATR too low ({atr_pct:.4f} < {cfg.MIN_ATR_PCT})",
+                close, 0,
+            )
+
         vol_ok = volume >= vol_ma * cfg.VOLUME_MULTIPLIER
 
         # VWAP filter
         vwap_ok_buy  = (not cfg.USE_VWAP_FILTER) or (vwap > 0 and close > vwap)
         vwap_ok_sell = (not cfg.USE_VWAP_FILTER) or (vwap > 0 and close < vwap)
 
+        # Breakout buffer: price must exceed OR level by a margin (not just 1 tick)
+        breakout_buffer = close * cfg.BREAKOUT_BUFFER_PCT
+
         # ── BUY: bullish breakout above OR High ───────────────────────────────
-        breakout_up  = close > (self.or_high or 0)
+        breakout_up  = close > (self.or_high or 0) + breakout_buffer
         ema_uptrend  = ema9 > ema21
         rsi_buy_ok   = cfg.RSI_BUY_MIN <= rsi <= cfg.RSI_BUY_MAX
 
@@ -295,7 +319,7 @@ class ORBStrategy:
             )
 
         # ── SHORT: bearish breakdown below OR Low ─────────────────────────────
-        breakdown_dn  = close < (self.or_low or 0)
+        breakdown_dn  = close < (self.or_low or 0) - breakout_buffer
         ema_downtrend = ema9 < ema21
         rsi_sell_ok   = cfg.RSI_SELL_MIN <= rsi <= cfg.RSI_SELL_MAX
 

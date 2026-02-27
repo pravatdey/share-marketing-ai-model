@@ -63,21 +63,30 @@ VOLUME_MULTIPLIER   = 1.5
 
 # Per-trade fallback stop loss and target (as % of entry price)
 # Used when ATR data is unavailable; otherwise ATR-based stops are preferred
-STOP_LOSS_PCT   = 0.005   # 0.5%
-TARGET_PCT      = 0.0075  # 0.75% → 1.5:1 reward:risk (higher win rate)
+STOP_LOSS_PCT   = 0.004   # 0.4%
+TARGET_PCT      = 0.008   # 0.8% → 2:1 reward:risk
 
 # ATR-based dynamic stop loss (preferred over fixed %)
-ATR_STOP_MULTIPLIER   = 1.5   # stop = 1.5 × ATR from entry
-ATR_TARGET_MULTIPLIER = 2.5   # target = 2.5 × ATR from entry (~1.67:1 R:R)
+ATR_STOP_MULTIPLIER   = 1.2   # stop = 1.2 × ATR from entry (tighter stop = smaller loss)
+ATR_TARGET_MULTIPLIER = 2.0   # target = 2.0 × ATR from entry (1.67:1 R:R)
 
 # Trailing stop: after trade moves 1R in profit, trail stop at this ATR multiple
-TRAILING_ATR_MULTIPLIER = 1.5
+TRAILING_ATR_MULTIPLIER = 1.0  # tighter trail to lock in profits faster
 
 # VWAP filter: only long above VWAP, only short below VWAP
 USE_VWAP_FILTER = True
 
 # How many top stocks to monitor simultaneously
 TOP_N_STOCKS = 50
+
+# Minimum Opening Range width as % of price – skip narrow/choppy ranges
+MIN_OR_RANGE_PCT = 0.003  # 0.3% – ignore ORB if range is too tight (fakeouts)
+
+# Minimum ATR as % of price – skip low-volatility stocks where noise dominates
+MIN_ATR_PCT = 0.004  # 0.4%
+
+# Breakout must exceed OR High/Low by this % to confirm (avoid 1-tick fakeouts)
+BREAKOUT_BUFFER_PCT = 0.001  # 0.1% above/below OR level
 
 # Maximum open positions at a time
 MAX_OPEN_POSITIONS = 1   # keep to 1 to stay within capital limits
@@ -97,8 +106,8 @@ MARKET_CLOSE_TIME  = "15:30"
 MID_DAY_PAUSE_START = "12:00"  # No new entries during mid-day lull
 MID_DAY_PAUSE_END   = "13:30"  # Resume scanning after 1:30 PM
 
-# Polling interval in seconds (check every 5 minutes)
-POLL_INTERVAL_SECS = 60
+# Polling interval in seconds – faster polling catches stop-loss exits sooner
+POLL_INTERVAL_SECS = 30
 
 # ── NSE Holidays 2025-2026 ──────────────────────────────────────────────────
 NSE_HOLIDAYS = {

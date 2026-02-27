@@ -149,7 +149,43 @@ class OrderManager:
             return []
 
     def exit_all_positions(self) -> None:
-        """Square off ALL open Intraday positions (used at forced exit time)."""
+        """
+        Square off ALL open Intraday positions using the dedicated Upstox
+        exit-positions API endpoint.  Falls back to manual reverse orders
+        if the bulk endpoint fails.
+        """
+        # ── Method 1: Use Upstox bulk exit endpoint ─────────────────────────
+        url = f"{cfg.UPSTOX_BASE_URL}/order/positions/exit"
+        try:
+            resp = requests.post(url, headers=self._headers, timeout=15)
+            if resp.status_code in (200, 207):
+                data = resp.json()
+                order_ids = data.get("data", {}).get("order_ids", [])
+                summary   = data.get("summary", {})
+                logger.info(
+                    "Bulk exit API response: status=%s | orders=%s | summary=%s",
+                    data.get("status"), order_ids, summary,
+                )
+                # Wait for each order to fill
+                for oid in order_ids:
+                    self.wait_for_fill(oid, max_wait=20)
+                logger.info("Bulk exit complete. %d order(s) placed.", len(order_ids))
+                # Verify no positions remain
+                self._verify_positions_closed()
+                return
+            else:
+                logger.warning(
+                    "Bulk exit API returned %d: %s – falling back to manual exit.",
+                    resp.status_code, resp.text,
+                )
+        except requests.RequestException as exc:
+            logger.warning("Bulk exit API failed: %s – falling back to manual exit.", exc)
+
+        # ── Method 2: Manual reverse orders (fallback) ──────────────────────
+        self._manual_exit_all()
+
+    def _manual_exit_all(self) -> None:
+        """Fallback: loop through positions and place individual reverse orders."""
         positions = self.get_positions()
         if not positions:
             logger.warning("No open positions returned from Upstox API – nothing to exit.")
@@ -193,7 +229,41 @@ class OrderManager:
                     inst_key, qty,
                 )
 
-        logger.info("Force-exit complete: %d / %d positions closed.", exited, len(positions))
+        logger.info("Manual exit complete: %d / %d positions closed.", exited, len(positions))
+        self._verify_positions_closed()
+
+    def _verify_positions_closed(self) -> None:
+        """Check that no open positions remain after exit attempt."""
+        import time as _time
+        _time.sleep(3)  # short pause for orders to settle
+        positions = self.get_positions()
+        open_count = 0
+        for pos in positions:
+            qty = abs(int(pos.get("quantity", 0)))
+            if qty > 0:
+                open_count += 1
+                inst_key = pos.get("instrument_token", "")
+                logger.error(
+                    "POSITION STILL OPEN after exit: %s × %d – attempting manual close.",
+                    inst_key, qty,
+                )
+                # Last-resort retry
+                side = pos.get("quantity", 0)
+                transaction_type = "SELL" if side > 0 else "BUY"
+                dummy_signal = type("S", (), {
+                    "instrument_key": inst_key,
+                    "quantity": qty,
+                    "ltp": pos.get("last_price", 0),
+                    "reason": "emergency-exit-retry",
+                })()
+                order_id = self.place_order(dummy_signal, transaction_type)
+                if order_id:
+                    self.wait_for_fill(order_id, max_wait=20)
+
+        if open_count == 0:
+            logger.info("Position verification: all positions confirmed closed.")
+        else:
+            logger.error("Position verification: %d position(s) may still be open!", open_count)
 
     # ── Today's Summary ───────────────────────────────────────────────────────
 
