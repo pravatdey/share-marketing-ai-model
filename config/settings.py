@@ -51,15 +51,15 @@ EMA_SLOW            = 21
 RSI_PERIOD          = 14
 
 # BUY signal: RSI must be between these values (momentum, not overbought)
-RSI_BUY_MIN         = 45
-RSI_BUY_MAX         = 70
+RSI_BUY_MIN         = 40
+RSI_BUY_MAX         = 75
 
 # SELL/Short signal: RSI must be between these values (weakness, not oversold)
-RSI_SELL_MIN        = 30
-RSI_SELL_MAX        = 55
+RSI_SELL_MIN        = 25
+RSI_SELL_MAX        = 60
 
 # Volume confirmation: current candle volume >= VOLUME_MULTIPLIER × 10-period avg
-VOLUME_MULTIPLIER   = 1.5
+VOLUME_MULTIPLIER   = 1.2
 
 # Per-trade fallback stop loss and target (as % of entry price)
 # Used when ATR data is unavailable; otherwise ATR-based stops are preferred
@@ -74,19 +74,21 @@ ATR_TARGET_MULTIPLIER = 2.0   # target = 2.0 × ATR from entry (1.67:1 R:R)
 TRAILING_ATR_MULTIPLIER = 1.0  # tighter trail to lock in profits faster
 
 # VWAP filter: only long above VWAP, only short below VWAP
-USE_VWAP_FILTER = True
+# Disabled – VWAP blocks too many valid breakouts on rangebound days.
+# EMA trend + RSI + Volume already filter direction well enough.
+USE_VWAP_FILTER = False
 
 # How many top stocks to monitor simultaneously
 TOP_N_STOCKS = 50
 
 # Minimum Opening Range width as % of price – skip narrow/choppy ranges
-MIN_OR_RANGE_PCT = 0.003  # 0.3% – ignore ORB if range is too tight (fakeouts)
+MIN_OR_RANGE_PCT = 0.002  # 0.2% – ignore ORB if range is too tight (fakeouts)
 
 # Minimum ATR as % of price – skip low-volatility stocks where noise dominates
-MIN_ATR_PCT = 0.004  # 0.4%
+MIN_ATR_PCT = 0.003  # 0.3%
 
 # Breakout must exceed OR High/Low by this % to confirm (avoid 1-tick fakeouts)
-BREAKOUT_BUFFER_PCT = 0.001  # 0.1% above/below OR level
+BREAKOUT_BUFFER_PCT = 0.0005  # 0.05% above/below OR level
 
 # Maximum open positions at a time
 MAX_OPEN_POSITIONS = 1   # keep to 1 to stay within capital limits

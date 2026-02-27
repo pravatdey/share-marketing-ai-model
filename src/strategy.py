@@ -318,6 +318,20 @@ class ORBStrategy:
                 close, qty, stop_loss, target, side="BUY",
             )
 
+        # Log near-miss BUY for diagnostics (at least breakout happened)
+        if breakout_up:
+            fails = []
+            if not ema_uptrend:  fails.append(f"EMA({ema9:.1f}<={ema21:.1f})")
+            if not rsi_buy_ok:   fails.append(f"RSI({rsi:.1f} not in {cfg.RSI_BUY_MIN}-{cfg.RSI_BUY_MAX})")
+            if not vol_ok:       fails.append(f"Vol({volume:.0f}<{vol_ma*cfg.VOLUME_MULTIPLIER:.0f})")
+            if not vwap_ok_buy:  fails.append("VWAP")
+            if fails:
+                return Signal(
+                    "HOLD", instrument_key,
+                    f"BUY breakout but blocked: {', '.join(fails)}",
+                    close, 0,
+                )
+
         # ── SHORT: bearish breakdown below OR Low ─────────────────────────────
         breakdown_dn  = close < (self.or_low or 0) - breakout_buffer
         ema_downtrend = ema9 < ema21
@@ -359,6 +373,20 @@ class ORBStrategy:
                 ),
                 close, qty, stop_loss, target, side="SHORT",
             )
+
+        # Log near-miss SHORT for diagnostics
+        if breakdown_dn:
+            fails = []
+            if not ema_downtrend: fails.append(f"EMA({ema9:.1f}>={ema21:.1f})")
+            if not rsi_sell_ok:   fails.append(f"RSI({rsi:.1f} not in {cfg.RSI_SELL_MIN}-{cfg.RSI_SELL_MAX})")
+            if not vol_ok:        fails.append(f"Vol({volume:.0f}<{vol_ma*cfg.VOLUME_MULTIPLIER:.0f})")
+            if not vwap_ok_sell:  fails.append("VWAP")
+            if fails:
+                return Signal(
+                    "HOLD", instrument_key,
+                    f"SHORT breakdown but blocked: {', '.join(fails)}",
+                    close, 0,
+                )
 
         return hold
 
